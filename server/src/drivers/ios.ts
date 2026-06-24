@@ -214,6 +214,10 @@ export class IosDriver implements DeviceDriver {
     }
   }
 
+  adbAccess(): { host: string; port: number; serial: string } | null {
+    return null; // iOS simulators don't speak adb (idb companion is future work)
+  }
+
   instanceCount(): number {
     return this.instances.size;
   }

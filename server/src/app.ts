@@ -18,6 +18,10 @@ const VERSION = "0.1.0";
 const createSessionSchema = z.object({
   template: z.string().min(1),
   ttl: z.number().int().positive().optional(),
+  // Default (applied in the handler): block until active. false → return queued.
+  wait: z.boolean().optional(),
+  // If the pool is full, fail with pool_full instead of queuing.
+  failIfBusy: z.boolean().optional(),
 });
 const resetSchema = z.object({
   mode: z.enum(["snapshot", "wipe", "reboot"]).default("snapshot"),
@@ -126,8 +130,11 @@ export async function buildApp(config: ServerConfig): Promise<BuiltApp> {
 
   // --- sessions -----------------------------------------------------------
   app.post("/sessions", async (request) => {
-    const { template, ttl } = parse(createSessionSchema, request.body);
-    return sessions.create(template, ttl);
+    const { template, ttl, wait, failIfBusy } = parse(createSessionSchema, request.body);
+    return sessions.createAndWait(template, ttl, {
+      wait: wait ?? true,
+      failIfBusy: failIfBusy ?? false,
+    });
   });
   app.get("/sessions", async () => ({ sessions: sessions.list() }));
   app.get("/sessions/:id", async (request) => {
@@ -146,6 +153,10 @@ export async function buildApp(config: ServerConfig): Promise<BuiltApp> {
   app.post("/sessions/:id/heartbeat", async (request) => {
     const { id } = request.params as { id: string };
     return sessions.heartbeat(id);
+  });
+  app.get("/sessions/:id/adb", async (request) => {
+    const { id } = request.params as { id: string };
+    return sessions.getAdb(id);
   });
   app.get("/sessions/:id/wait", async (request, reply) => {
     const { id } = request.params as { id: string };

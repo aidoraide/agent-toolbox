@@ -11,6 +11,12 @@ import type {
 } from "./drivers/driver";
 import { AsyncQueue } from "./util/async-queue";
 
+export interface AdbAccess {
+  host: string;
+  port: number;
+  serial: string;
+}
+
 export type WaitEvent =
   | { status: "queued"; position: number }
   | { status: "active"; sessionId: string; templateVersion: number }
@@ -27,6 +33,7 @@ interface Session {
   expiresAt: number;
   ttlMs: number;
   listeners: Set<(event: WaitEvent) => void>;
+  adb: AdbAccess | null;
 }
 
 export interface SessionView {
@@ -37,6 +44,7 @@ export interface SessionView {
   leasedAt?: string;
   expiresAt?: string;
   position?: number;
+  adb?: AdbAccess;
 }
 
 export class SessionManager {
@@ -81,6 +89,7 @@ export class SessionManager {
       expiresAt: now + (ttlMs ?? this.config.ttlMs),
       ttlMs: ttlMs ?? this.config.ttlMs,
       listeners: new Set(),
+      adb: null,
     };
     this.sessions.set(session.id, session);
 
@@ -91,6 +100,52 @@ export class SessionManager {
     }
 
     return this.view(session);
+  }
+
+  // Lease, optionally blocking until the device is active. This is the default
+  // client path: one call gets you a usable device.
+  async createAndWait(
+    templateSlug: string,
+    ttlMs: number | undefined,
+    opts: { wait: boolean; failIfBusy: boolean },
+  ): Promise<SessionView> {
+    const view = await this.create(templateSlug, ttlMs);
+    if (view.status === "active") return view;
+    // Queued:
+    if (opts.failIfBusy) {
+      await this.release(view.sessionId);
+      throw new AppError("pool_full", "No capacity available for that platform");
+    }
+    if (!opts.wait) return view;
+    await this.waitForActive(view.sessionId);
+    return this.get(view.sessionId);
+  }
+
+  // Resolve once the session is active (device booted, tunnel up), or reject if
+  // it's removed first.
+  waitForActive(id: string): Promise<void> {
+    const session = this.requireSession(id);
+    if (session.status === "active" && session.handle) return Promise.resolve();
+    return new Promise<void>((resolve, reject) => {
+      const listener = (event: WaitEvent) => {
+        if (event.status === "active") {
+          session.listeners.delete(listener);
+          resolve();
+        } else if (event.status === "gone") {
+          session.listeners.delete(listener);
+          reject(new AppError("session_not_found", `Session ${id} was removed before activating`));
+        }
+      };
+      session.listeners.add(listener);
+    });
+  }
+
+  getAdb(id: string): AdbAccess {
+    const session = this.requireActive(id);
+    if (!session.adb) {
+      throw new AppError("adb_unavailable", `Session ${id} has no adb interface`);
+    }
+    return session.adb;
   }
 
   get(id: string): SessionView {
@@ -232,6 +287,9 @@ export class SessionManager {
       await this.fillSlots(session.platform);
       throw err;
     }
+    // Record how to reach this device over adb (shared adb server + serial), if
+    // it has an adb interface.
+    session.adb = this.driver.adbAccess(session.handle);
     session.expiresAt = this.clock.now() + session.ttlMs;
     this.notify(session, {
       status: "active",
@@ -242,6 +300,7 @@ export class SessionManager {
 
   private async remove(session: Session, reason: "gone"): Promise<void> {
     const platform = session.platform;
+    session.adb = null;
     if (session.status === "active" && session.handle) {
       await this.driver.destroy(session.handle);
     } else {
@@ -321,6 +380,7 @@ export class SessionManager {
     if (session.status === "active") {
       base.leasedAt = session.leasedAt ? this.clock.toIso(session.leasedAt) : undefined;
       base.expiresAt = this.clock.toIso(session.expiresAt);
+      if (session.adb) base.adb = session.adb;
     } else {
       base.position = this.positionOf(session);
     }

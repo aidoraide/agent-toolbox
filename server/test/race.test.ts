@@ -8,9 +8,9 @@ describe("queue race", () => {
 
   test("S16 releasing one slot promotes exactly one of two queued", async () => {
     s = await startServer({ maxByPlatform: { android: 1, ios: 1 } });
-    const a = await cli(s.server, ["session", "create", "--template", "pixel6-api35"]);
-    const b = await cli(s.server, ["session", "create", "--template", "pixel6-api35"]);
-    const c = await cli(s.server, ["session", "create", "--template", "pixel6-api35"]);
+    const a = await cli(s.server, ["session", "create", "--no-wait", "--template", "pixel6-api35"]);
+    const b = await cli(s.server, ["session", "create", "--no-wait", "--template", "pixel6-api35"]);
+    const c = await cli(s.server, ["session", "create", "--no-wait", "--template", "pixel6-api35"]);
 
     await cli(s.server, ["session", "release", a.json?.sessionId as string]);
 

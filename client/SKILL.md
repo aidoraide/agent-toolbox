@@ -27,12 +27,14 @@ Run: `npx tsx <client>/src/index.ts <command>` (or the `toolbox` bin once linked
 # 1. See what base devices exist
 toolbox templates list
 
-# 2. Lease one (returns active, or queued if the pool is full)
+# 2. Lease one. BLOCKS by default until the device is active (lock-acquire).
 toolbox session create --template pixel6-api35
-#   → {"sessionId":"s_1","status":"active","template":"pixel6-api35","templateVersion":1}
-#   → {"sessionId":"s_1","status":"queued","position":2}   (pool full)
+#   → {"sessionId":"s_1","status":"active","template":"pixel6-api35",
+#      "adb":{"host":"127.0.0.1","port":5037,"serial":"emulator-5554"}}
+#   --no-wait      → returns immediately {"status":"queued","position":2}
+#   --fail-if-busy → errors with code "pool_full" instead of queuing
 
-# 3. If queued, block until a slot frees (streams position updates, then active)
+# 3. If you used --no-wait and got queued, block until active when you're ready
 toolbox session wait s_1
 
 # 4. Drive the device — all proxied, no local adb/idb needed
@@ -49,6 +51,29 @@ toolbox session reset s_1 --mode snapshot     # snapshot|wipe|reboot
 # 6. Done — free the slot for the next agent
 toolbox session release s_1
 ```
+
+## Driving the device with real adb tools (Detox, Appium, Gradle, Flutter)
+
+For anything that speaks adb, don't use the proxy verbs — attach your real
+toolchain to the broker's adb server and address the device by serial:
+
+```bash
+toolbox session adb s_1
+#   → {"host":"127.0.0.1","port":5037,"serial":"emulator-5554"}
+
+export ADB_SERVER_SOCKET=tcp:127.0.0.1:5037
+adb -s emulator-5554 install ./app-debug.apk
+adb -s emulator-5554 reverse tcp:3001 tcp:3001     # device → your test server
+npx detox test --device-name emulator-5554          # Detox/Appium/Gradle work unchanged
+```
+
+One shared adb server, many clients, routed by serial — exactly what adb is built
+for. The pool cap still holds: adb can't create devices, only `session create`
+can. (Maestro/dadb talks straight to the device daemon and isn't supported on a
+shared device yet — that needs a future exclusive-lease mode.)
+
+The proxy verbs (`device shell/install/screenshot/logs/...`) remain for agents
+that have no local adb at all.
 
 ## Builds
 

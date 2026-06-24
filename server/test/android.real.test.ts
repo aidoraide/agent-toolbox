@@ -104,6 +104,26 @@ suite("real android — shared emulator", () => {
     expect(r.json).toMatchObject({ ok: true });
   });
 
+  test("ADB lease exposes adb server + serial; an adb client drives the device", async () => {
+    const adbInfo = await cli(s.server, ["session", "adb", id]);
+    const access = adbInfo.json as { host: string; port: number; serial: string };
+    expect(access.serial).toMatch(/^emulator-\d+$/);
+    expect(access.port).toBeGreaterThan(0);
+
+    // Point an adb client at the broker's adb server and address the device by
+    // serial — exactly how Detox/Appium/Gradle attach.
+    const { execFileSync } = await import("node:child_process");
+    const ADB = adbPath();
+    const env = { ...process.env, ADB_SERVER_SOCKET: `tcp:${access.host}:${access.port}` };
+    const sdk = execFileSync(ADB, ["-s", access.serial, "shell", "getprop", "ro.build.version.sdk"], {
+      env,
+      timeout: 15_000,
+    })
+      .toString()
+      .trim();
+    expect(sdk).toMatch(/^\d+$/);
+  });
+
   test("D10 logcat streams at least one line", async () => {
     expect(await firstLogLine(s.server, id)).toBe(true);
   });
@@ -264,7 +284,9 @@ concurrencySuite(`real android — ${AGENTS} agents / ${POOL} emulators`, () => 
         // Phase 1 — fire all leases at once. The first POOL boot and return
         // active; the rest return queued immediately.
         const creates = await Promise.all(
-          Array.from({ length: AGENTS }, () => cli(s.server, ["session", "create", "--template", "medium"])),
+          Array.from({ length: AGENTS }, () =>
+            cli(s.server, ["session", "create", "--no-wait", "--template", "medium"]),
+          ),
         );
         const statuses = creates.map((r) => r.json?.status);
         expect(statuses.filter((x) => x === "active").length).toBe(POOL);

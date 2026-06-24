@@ -10,7 +10,9 @@ export type ErrorCode =
   | "artifact_not_found"
   | "build_not_found"
   | "build_failed"
-  | "project_not_found";
+  | "project_not_found"
+  | "pool_full"
+  | "adb_unavailable";
 
 const STATUS_BY_CODE: Record<ErrorCode, number> = {
   invalid_argument: 400,
@@ -23,6 +25,8 @@ const STATUS_BY_CODE: Record<ErrorCode, number> = {
   build_not_found: 404,
   build_failed: 422,
   project_not_found: 400,
+  pool_full: 409,
+  adb_unavailable: 400,
 };
 
 export class AppError extends Error {

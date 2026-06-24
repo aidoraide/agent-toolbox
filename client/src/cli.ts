@@ -18,7 +18,7 @@ interface ParsedArgs {
   flags: Record<string, string | boolean>;
 }
 
-const BOOLEAN_FLAGS = new Set(["force"]);
+const BOOLEAN_FLAGS = new Set(["force", "no-wait", "fail-if-busy"]);
 
 function parseArgs(tokens: string[]): ParsedArgs {
   const positionals: string[] = [];
@@ -83,10 +83,9 @@ export async function run(argv: string[]): Promise<RunResult> {
   const flush = () => (out.length ? `${out.join("\n")}\n` : "");
 
   const server = resolveServer(typeof flags.server === "string" ? flags.server : undefined);
-  // Default is generous because `session create` blocks until the device boots
-  // (a cold emulator can take 60-90s). Override with --timeout for tighter ops.
-  const timeoutMs =
-    typeof flags.timeout === "string" ? Number(flags.timeout) : 120_000;
+  // No timeout by default — leases/streams are legitimately long-running against
+  // a local server. Opt in with --timeout for tighter control.
+  const timeoutMs = typeof flags.timeout === "string" ? Number(flags.timeout) : undefined;
 
   try {
     await dispatch({ positionals, flags, server, timeoutMs, emit });
@@ -106,7 +105,7 @@ interface Ctx {
   positionals: string[];
   flags: ParsedArgs["flags"];
   server: string;
-  timeoutMs: number;
+  timeoutMs: number | undefined;
   emit: (obj: unknown) => void;
 }
 
@@ -145,7 +144,16 @@ async function dispatchSession(ctx: Ctx, verb: string | undefined, rest: string[
     case "create": {
       const body: Record<string, unknown> = { template: requireFlag(flags, "template") };
       if (flags.ttl !== undefined) body.ttl = intFlag(flags, "ttl");
+      // Blocks until active by default. --no-wait returns immediately (queued);
+      // --fail-if-busy returns a pool_full error instead of queuing.
+      if (flags["no-wait"] === true) body.wait = false;
+      if (flags["fail-if-busy"] === true) body.failIfBusy = true;
       emit(await requestJson(server, "POST", "/sessions", { body, timeoutMs }));
+      return;
+    }
+    case "adb": {
+      const id = requirePositional(rest, 0, "sessionId");
+      emit(await requestJson(server, "GET", `/sessions/${id}/adb`, { timeoutMs }));
       return;
     }
     case "wait": {

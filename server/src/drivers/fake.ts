@@ -196,6 +196,10 @@ export class FakeDriver implements DeviceDriver {
     }
   }
 
+  adbAccess(): { host: string; port: number; serial: string } | null {
+    return null; // the fake driver has no real adb interface
+  }
+
   instanceCount(): number {
     return this.instances.size;
   }

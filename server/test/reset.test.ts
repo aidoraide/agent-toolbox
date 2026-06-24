@@ -3,7 +3,7 @@ import { afterEach, describe, expect, test } from "vitest";
 import { cli, startServer, type TestServer } from "./harness";
 
 async function createActive(server: string, template = "pixel6-api35"): Promise<string> {
-  const r = await cli(server, ["session", "create", "--template", template]);
+  const r = await cli(server, ["session", "create", "--no-wait", "--template", template]);
   return r.json?.sessionId as string;
 }
 
@@ -56,7 +56,7 @@ describe("reset", () => {
   test("RS5 reset on queued → session_not_active", async () => {
     s = await startServer({ maxByPlatform: { android: 1, ios: 1 } });
     await createActive(s.server);
-    const queued = await cli(s.server, ["session", "create", "--template", "pixel6-api35"]);
+    const queued = await cli(s.server, ["session", "create", "--no-wait", "--template", "pixel6-api35"]);
     const r = await cli(s.server, ["session", "reset", queued.json?.sessionId as string]);
     expect(r.err?.code).toBe("session_not_active");
   });
@@ -77,7 +77,7 @@ describe("reset", () => {
   test("RS8 reset does not change slot count or queue order", async () => {
     s = await startServer({ maxByPlatform: { android: 1, ios: 1 } });
     const a = await createActive(s.server);
-    const queued = await cli(s.server, ["session", "create", "--template", "pixel6-api35"]);
+    const queued = await cli(s.server, ["session", "create", "--no-wait", "--template", "pixel6-api35"]);
     await cli(s.server, ["session", "reset", a]);
     const cap = await cli(s.server, ["capacity"]);
     expect((cap.json as any).android).toMatchObject({ active: 1, queued: 1 });

@@ -89,6 +89,14 @@ export interface DeviceDriver {
   discoverInstances(): Promise<DiscoveredInstance[]>;
   destroyByRef(ref: string): Promise<void>;
 
+  // How to reach this device over adb, if it has an adb interface (Android does;
+  // iOS sims / the fake driver don't). Returns the broker's adb SERVER endpoint
+  // plus the device serial — agents point ADB_SERVER_SOCKET at host:port and
+  // address the device with `adb -s <serial>`. One shared server, many clients,
+  // routed by serial (the model adb is built for); Detox/Appium/Gradle/Flutter
+  // all work this way unchanged.
+  adbAccess(handle: DeviceHandle): { host: string; port: number; serial: string } | null;
+
   // Test introspection: live clone count, for leak assertions.
   instanceCount(): number;
 }

@@ -7,7 +7,7 @@ import { afterEach, describe, expect, test } from "vitest";
 import { advanceClock, cli, startServer, tmpFile, type TestServer } from "./harness";
 
 async function createActive(server: string, template = "pixel6-api35"): Promise<string> {
-  const r = await cli(server, ["session", "create", "--template", template]);
+  const r = await cli(server, ["session", "create", "--no-wait", "--template", template]);
   return r.json?.sessionId as string;
 }
 
@@ -32,7 +32,7 @@ describe("device proxy", () => {
   test("D3 shell on queued session → session_not_active", async () => {
     s = await startServer({ maxByPlatform: { android: 1, ios: 1 } });
     await createActive(s.server);
-    const queued = await cli(s.server, ["session", "create", "--template", "pixel6-api35"]);
+    const queued = await cli(s.server, ["session", "create", "--no-wait", "--template", "pixel6-api35"]);
     const r = await cli(s.server, ["device", "shell", queued.json?.sessionId as string, "echo hi"]);
     expect(r.err?.code).toBe("session_not_active");
   });

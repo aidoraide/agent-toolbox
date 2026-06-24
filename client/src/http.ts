@@ -36,9 +36,13 @@ async function readError(res: Response, text: string): Promise<never> {
   throw new ClientFail(err?.code ?? "bad_server_response", err?.message ?? `HTTP ${res.status}`);
 }
 
-async function doFetch(url: string, init: RequestInit, timeoutMs: number): Promise<Response> {
+async function doFetch(url: string, init: RequestInit, timeoutMs?: number): Promise<Response> {
+  // No timeout by default — this is a local server and leases/streams are
+  // legitimately long-running (a queued create can block for minutes). A timeout
+  // is opt-in via --timeout for callers that want to bail early.
+  const signal = timeoutMs && timeoutMs > 0 ? AbortSignal.timeout(timeoutMs) : undefined;
   try {
-    return await fetch(url, { ...init, signal: AbortSignal.timeout(timeoutMs) });
+    return await fetch(url, { ...init, signal });
   } catch (err) {
     if ((err as Error).name === "TimeoutError") {
       throw new ClientFail("timeout", `Request to ${url} timed out after ${timeoutMs}ms`);
@@ -51,7 +55,7 @@ export async function requestJson(
   server: string,
   method: string,
   pathname: string,
-  opts: { body?: unknown; timeoutMs: number },
+  opts: { body?: unknown; timeoutMs?: number },
 ): Promise<unknown> {
   const init: RequestInit = { method };
   if (opts.body !== undefined) {
@@ -72,7 +76,7 @@ export async function streamLines(
   server: string,
   method: string,
   pathname: string,
-  timeoutMs: number,
+  timeoutMs: number | undefined,
   onLine: (value: unknown) => void,
 ): Promise<void> {
   const res = await doFetch(server + pathname, { method }, timeoutMs);
@@ -108,7 +112,7 @@ export async function downloadFile(
   server: string,
   pathname: string,
   outPath: string,
-  timeoutMs: number,
+  timeoutMs?: number,
 ): Promise<number> {
   const res = await doFetch(server + pathname, { method: "GET" }, timeoutMs);
   if (!res.ok) {
@@ -124,7 +128,7 @@ export async function uploadFile(
   server: string,
   pathname: string,
   filePath: string,
-  timeoutMs: number,
+  timeoutMs?: number,
 ): Promise<unknown> {
   if (!fs.existsSync(filePath)) {
     throw new ClientFail("invalid_argument", `Local file not found: ${filePath}`);
