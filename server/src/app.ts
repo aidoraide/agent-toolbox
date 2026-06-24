@@ -3,6 +3,7 @@ import Fastify, { type FastifyInstance, type FastifyReply, type FastifyRequest }
 import { z } from "zod";
 
 import { BuildManager, FakeBuildRunner } from "./builds";
+import { RealBuildRunner } from "./builds-real";
 import { ManualClock, SystemClock, type Clock } from "./clock";
 import type { ServerConfig } from "./config";
 import { AndroidDriver } from "./drivers/android";
@@ -95,7 +96,9 @@ export async function buildApp(config: ServerConfig): Promise<BuiltApp> {
   await reconcile(driver);
 
   const sessions = new SessionManager(driver, config, clock);
-  const builds = new BuildManager(new FakeBuildRunner(), clock);
+  // Real toolchain builds (Gradle/xcodebuild) unless we're on the fake driver.
+  const buildRunner = config.driver === "fake" ? new FakeBuildRunner() : new RealBuildRunner();
+  const builds = new BuildManager(buildRunner, clock);
 
   const app = Fastify({ logger: false });
   await app.register(multipart, { limits: { fileSize: 1024 * 1024 * 1024 } });
@@ -217,6 +220,10 @@ export async function buildApp(config: ServerConfig): Promise<BuiltApp> {
   app.post("/builds", async (request) => {
     const body = parse(buildSchema, request.body);
     return builds.create(body);
+  });
+  app.get("/builds/:id", async (request) => {
+    const { id } = request.params as { id: string };
+    return builds.summary(id);
   });
   app.get("/builds/:id/logs", async (request, reply) => {
     const { id } = request.params as { id: string };

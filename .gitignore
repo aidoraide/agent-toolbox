@@ -5,3 +5,8 @@ dist/
 .cache/
 /tmp/
 *.tsbuildinfo
+
+# Build sample apps are large third-party clones — fetched on demand via
+# samples/fetch.sh, not committed.
+/samples/android/
+/samples/ios/

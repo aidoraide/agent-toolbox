@@ -77,15 +77,30 @@ that have no local adb at all.
 
 ## Builds
 
-Independent of sessions. Artifacts stream as bytes — download then `device install`.
+The broker builds on the Mac (Gradle / xcodebuild) so a container that can't —
+especially for iOS — can delegate and pull the artifact bytes. Independent of
+sessions.
+
+`build create` runs to completion: **raw build logs stream to stderr**, and the
+**result object prints to stdout** — so you watch/keep the logs *and* capture a
+clean JSON result, no parsing tension.
 
 ```bash
-toolbox build create --platform android --path /repo --cache-key feat-x --force
-#   → {"buildId":"b_1","status":"running","cacheHit":false}
-toolbox build logs b_1                         # stream stdout + terminal exit event
-toolbox build artifact b_1 apk      -o app.apk
-toolbox build artifact b_1 test-apk -o test.apk
+# logs → stderr (live), result → stdout
+RESULT=$(toolbox build create --platform android --path /repo --cache-key feat-x 2>build.log)
+#   stdout → {"buildId":"b_1","platform":"android","status":"done","cacheHit":false,
+#             "exitCode":0,"ok":true,"durationMs":21204,"artifacts":["apk","test-apk"]}
+BUILD_ID=$(jq -r .buildId <<<"$RESULT")
+
+toolbox build artifact "$BUILD_ID" apk      -o app.apk     # android: apk / test-apk
+toolbox build artifact "$BUILD_ID" app      -o App.zip     # ios: zipped .app (unzip → simctl install)
 ```
+
+- `status` is `"done"` or `"failed"` (the build ran — `build create` exits 0; a
+  *toolbox* error like bad args or unreachable server exits nonzero).
+- `--cache-key` namespaces the artifact cache; `--force` rebuilds it; no key →
+  shared cache.
+- `toolbox build logs <id>` re-streams a build you started elsewhere (NDJSON).
 
 - `--cache-key` namespaces the artifact cache (e.g. per feature).
 - `--force` rebuilds and overwrites that key's cache.

@@ -76,10 +76,20 @@ function intFlag(flags: ParsedArgs["flags"], name: string): number {
   return value;
 }
 
-export async function run(argv: string[]): Promise<RunResult> {
+export async function run(
+  argv: string[],
+  opts: { onStderr?: (chunk: string) => void } = {},
+): Promise<RunResult> {
   const { positionals, flags } = parseArgs(argv);
   const out: string[] = [];
+  const errParts: string[] = [];
   const emit = (obj: unknown) => out.push(JSON.stringify(obj));
+  // Raw, unwrapped diagnostic output (e.g. live build logs) → stderr. The result
+  // object stays clean JSON on stdout.
+  const log = (chunk: string) => {
+    errParts.push(chunk);
+    opts.onStderr?.(chunk);
+  };
   const flush = () => (out.length ? `${out.join("\n")}\n` : "");
 
   const server = resolveServer(typeof flags.server === "string" ? flags.server : undefined);
@@ -88,14 +98,14 @@ export async function run(argv: string[]): Promise<RunResult> {
   const timeoutMs = typeof flags.timeout === "string" ? Number(flags.timeout) : undefined;
 
   try {
-    await dispatch({ positionals, flags, server, timeoutMs, emit });
-    return { stdout: flush(), stderr: "", exitCode: 0 };
+    await dispatch({ positionals, flags, server, timeoutMs, emit, log });
+    return { stdout: flush(), stderr: errParts.join(""), exitCode: 0 };
   } catch (err) {
     const code = err instanceof ClientFail ? err.code : "internal_error";
     const message = err instanceof Error ? err.message : String(err);
     return {
       stdout: flush(),
-      stderr: `${JSON.stringify({ error: { code, message } })}\n`,
+      stderr: `${errParts.join("")}${JSON.stringify({ error: { code, message } })}\n`,
       exitCode: 1,
     };
   }
@@ -107,6 +117,7 @@ interface Ctx {
   server: string;
   timeoutMs: number | undefined;
   emit: (obj: unknown) => void;
+  log: (chunk: string) => void;
 }
 
 async function dispatch(ctx: Ctx): Promise<void> {
@@ -244,7 +255,7 @@ async function dispatchDevice(ctx: Ctx, verb: string | undefined, rest: string[]
 }
 
 async function dispatchBuild(ctx: Ctx, verb: string | undefined, rest: string[]): Promise<void> {
-  const { server, timeoutMs, flags, emit } = ctx;
+  const { server, timeoutMs, flags, emit, log } = ctx;
   switch (verb) {
     case "create": {
       const body: Record<string, unknown> = {
@@ -253,7 +264,19 @@ async function dispatchBuild(ctx: Ctx, verb: string | undefined, rest: string[])
       };
       if (typeof flags["cache-key"] === "string") body.cacheKey = flags["cache-key"];
       if (flags.force === true) body.force = true;
-      emit(await requestJson(server, "POST", "/builds", { body, timeoutMs }));
+
+      const created = (await requestJson(server, "POST", "/builds", { body, timeoutMs })) as {
+        buildId: string;
+      };
+      // Stream raw build logs to stderr as they arrive...
+      await streamLines(server, "GET", `/builds/${created.buildId}/logs`, timeoutMs, (event) => {
+        const ev = event as { type?: string; data?: string };
+        if ((ev.type === "stdout" || ev.type === "stderr") && typeof ev.data === "string") {
+          log(ev.data);
+        }
+      });
+      // ...then print the clean result object to stdout.
+      emit(await requestJson(server, "GET", `/builds/${created.buildId}`, { timeoutMs }));
       return;
     }
     case "logs": {

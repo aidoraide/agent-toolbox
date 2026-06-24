@@ -48,9 +48,17 @@ export async function cli(server: string, args: string[]): Promise<CliOutcome> {
     .split("\n")
     .filter(Boolean)
     .map((line) => JSON.parse(line) as Record<string, unknown>);
-  const errObj = result.stderr.trim()
-    ? (JSON.parse(result.stderr.trim()) as { error: { code: string; message: string } }).error
-    : null;
+  // stderr may carry raw build logs followed by a trailing error JSON line. Only
+  // treat the last line as an error if it parses as our error envelope.
+  let errObj: { code: string; message: string } | null = null;
+  const lastErrLine = result.stderr.trim().split("\n").pop();
+  if (lastErrLine?.startsWith("{")) {
+    try {
+      errObj = (JSON.parse(lastErrLine) as { error?: { code: string; message: string } }).error ?? null;
+    } catch {
+      errObj = null;
+    }
+  }
   return {
     stdout: result.stdout,
     stderr: result.stderr,

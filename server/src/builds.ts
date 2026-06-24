@@ -167,6 +167,32 @@ export class BuildManager {
     }
   }
 
+  // Final build result, once complete. Drives the result JSON the client prints
+  // to stdout after streaming logs to stderr.
+  async summary(id: string): Promise<{
+    buildId: string;
+    platform: Platform;
+    status: Build["status"];
+    cacheHit: boolean;
+    exitCode: number | null;
+    ok: boolean | null;
+    durationMs: number | null;
+    artifacts: string[];
+  }> {
+    const build = this.requireBuild(id);
+    await build.completion;
+    return {
+      buildId: build.id,
+      platform: build.platform,
+      status: build.status,
+      cacheHit: build.cacheHit,
+      exitCode: build.exit?.exitCode ?? null,
+      ok: build.exit?.ok ?? null,
+      durationMs: build.exit?.durationMs ?? null,
+      artifacts: [...build.artifacts.keys()],
+    };
+  }
+
   async artifact(id: string, name: string): Promise<Buffer> {
     const build = this.requireBuild(id);
     await build.completion;
