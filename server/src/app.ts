@@ -5,6 +5,7 @@ import { z } from "zod";
 import { BuildManager, FakeBuildRunner } from "./builds";
 import { ManualClock, SystemClock, type Clock } from "./clock";
 import type { ServerConfig } from "./config";
+import { AndroidDriver } from "./drivers/android";
 import { FakeDriver } from "./drivers/fake";
 import type { DeviceDriver, InputSpec, ResetMode } from "./drivers/driver";
 import { AppError, errorBody } from "./errors";
@@ -78,7 +79,10 @@ export interface BuiltApp {
 
 export async function buildApp(config: ServerConfig): Promise<BuiltApp> {
   const clock: Clock = config.testMode ? new ManualClock() : new SystemClock();
-  const driver: DeviceDriver = new FakeDriver(config.tagPrefix, config.seedInstances);
+  const driver: DeviceDriver =
+    config.driver === "android"
+      ? new AndroidDriver(config.cacheDir, config.tagPrefix)
+      : new FakeDriver(config.tagPrefix, config.seedInstances);
 
   // Reconcile orphans before anything else can lease.
   await reconcile(driver);

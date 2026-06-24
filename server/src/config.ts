@@ -11,6 +11,9 @@ export interface ServerConfig {
   templates: TemplateConfig[];
   cacheDir: string;
   testMode: boolean;
+  // Which device backend to use. "fake" is in-memory; "android" drives real
+  // emulators via adb/emulator.
+  driver: "fake" | "android";
   // Marker baked into every clone we create, so reconciliation can tell our
   // orphans apart from the user's own devices.
   tagPrefix: string;
@@ -45,6 +48,7 @@ export function defaultConfig(overrides: Partial<ServerConfig> = {}): ServerConf
     templates: DEFAULT_TEMPLATES,
     cacheDir: path.join(os.homedir(), ".cache", "agent-toolbox"),
     testMode: process.env.TOOLBOX_TEST_MODE === "1",
+    driver: "fake",
     tagPrefix: "agtbx-",
     ...overrides,
   };
@@ -57,6 +61,9 @@ export function loadConfig(): ServerConfig {
   if (process.env.TOOLBOX_PORT) overrides.port = Number(process.env.TOOLBOX_PORT);
   if (process.env.TOOLBOX_CACHE_DIR) overrides.cacheDir = process.env.TOOLBOX_CACHE_DIR;
   if (process.env.TOOLBOX_TTL_MS) overrides.ttlMs = Number(process.env.TOOLBOX_TTL_MS);
+  if (process.env.TOOLBOX_DRIVER === "android" || process.env.TOOLBOX_DRIVER === "fake") {
+    overrides.driver = process.env.TOOLBOX_DRIVER;
+  }
   if (process.env.TOOLBOX_MAX_ANDROID || process.env.TOOLBOX_MAX_IOS) {
     overrides.maxByPlatform = {
       android: Number(process.env.TOOLBOX_MAX_ANDROID ?? 5),
