@@ -53,6 +53,12 @@ export type InputSpec =
   | { type: "tap"; x: number; y: number }
   | { type: "swipe"; x1: number; y1: number; x2: number; y2: number };
 
+// Platform-appropriate native handle so an agent's own toolchain can drive the
+// device directly.
+export type DeviceAccess =
+  | { kind: "adb"; host: string; port: number; serial: string }
+  | { kind: "simctl"; udid: string };
+
 // A pre-existing instance discovered on the host during reconciliation.
 export interface DiscoveredInstance {
   ref: string;
@@ -89,13 +95,15 @@ export interface DeviceDriver {
   discoverInstances(): Promise<DiscoveredInstance[]>;
   destroyByRef(ref: string): Promise<void>;
 
-  // How to reach this device over adb, if it has an adb interface (Android does;
-  // iOS sims / the fake driver don't). Returns the broker's adb SERVER endpoint
-  // plus the device serial — agents point ADB_SERVER_SOCKET at host:port and
-  // address the device with `adb -s <serial>`. One shared server, many clients,
-  // routed by serial (the model adb is built for); Detox/Appium/Gradle/Flutter
-  // all work this way unchanged.
-  adbAccess(handle: DeviceHandle): { host: string; port: number; serial: string } | null;
+  // How a client's own toolchain attaches to this device, platform-appropriate:
+  //   - Android: the broker's adb SERVER endpoint + the device serial. Agents set
+  //     ADB_SERVER_SOCKET=tcp:host:port and use `adb -s <serial>` (Detox/Appium/
+  //     Gradle/Flutter work unchanged).
+  //   - iOS: the simulator UDID. Agents use `xcrun simctl`/`xcodebuild`/Detox-iOS
+  //     against `id=<udid>`.
+  // Returns null for the fake driver. Requires the agent to be local to the
+  // broker (same machine) for now.
+  deviceAccess(handle: DeviceHandle): DeviceAccess | null;
 
   // Test introspection: live clone count, for leak assertions.
   instanceCount(): number;

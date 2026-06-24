@@ -122,6 +122,16 @@ suite("real ios — shared simulator", () => {
     expect(await firstLogLine(s.server, id)).toBe(true);
   });
 
+  test("ACCESS lease exposes the simulator UDID; simctl drives it", async () => {
+    const info = await cli(s.server, ["session", "access", id]);
+    const access = info.json as { kind: string; udid: string };
+    expect(access.kind).toBe("simctl");
+    expect(access.udid).toMatch(/^[0-9A-F-]{36}$/i);
+    // The agent's own simctl can drive the leased sim by UDID.
+    const state = await simctl(["spawn", access.udid, "/bin/sh", "-c", "echo via-udid"]);
+    expect(state.stdout.trim()).toBe("via-udid");
+  });
+
   test("D13 forward is unsupported on iOS", async () => {
     const r = await cli(s.server, ["device", "forward", id, "--remote", "3001", "--local", "3001"]);
     expect(r.err?.code).toBe("unsupported_on_platform");

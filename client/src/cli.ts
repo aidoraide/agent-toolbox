@@ -151,9 +151,9 @@ async function dispatchSession(ctx: Ctx, verb: string | undefined, rest: string[
       emit(await requestJson(server, "POST", "/sessions", { body, timeoutMs }));
       return;
     }
-    case "adb": {
+    case "access": {
       const id = requirePositional(rest, 0, "sessionId");
-      emit(await requestJson(server, "GET", `/sessions/${id}/adb`, { timeoutMs }));
+      emit(await requestJson(server, "GET", `/sessions/${id}/access`, { timeoutMs }));
       return;
     }
     case "wait": {

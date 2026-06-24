@@ -42,10 +42,10 @@ describe("blocking create (default lease UX)", () => {
     expect(r.json).toMatchObject({ status: "queued" });
   });
 
-  test("BL5 fake sessions expose no adb endpoint", async () => {
+  test("BL5 fake sessions expose no device access", async () => {
     s = await startServer();
     const created = await cli(s.server, ["session", "create", "--template", "pixel6-api35"]);
-    const r = await cli(s.server, ["session", "adb", created.json?.sessionId as string]);
-    expect(r.err?.code).toBe("adb_unavailable");
+    const r = await cli(s.server, ["session", "access", created.json?.sessionId as string]);
+    expect(r.err?.code).toBe("access_unavailable");
   });
 });

@@ -5,6 +5,7 @@ import path from "node:path";
 
 import { AppError } from "../errors";
 import {
+  type DeviceAccess,
   type DeviceDriver,
   type DeviceHandle,
   type DeviceVerb,
@@ -214,8 +215,11 @@ export class IosDriver implements DeviceDriver {
     }
   }
 
-  adbAccess(): { host: string; port: number; serial: string } | null {
-    return null; // iOS simulators don't speak adb (idb companion is future work)
+  deviceAccess(handle: DeviceHandle): DeviceAccess | null {
+    const instance = this.instances.get(handle.instanceId);
+    if (!instance) return null;
+    // Hand back the UDID; the agent drives it with its own simctl/xcodebuild.
+    return { kind: "simctl", udid: instance.udid };
   }
 
   instanceCount(): number {

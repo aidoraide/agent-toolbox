@@ -105,8 +105,9 @@ suite("real android — shared emulator", () => {
   });
 
   test("ADB lease exposes adb server + serial; an adb client drives the device", async () => {
-    const adbInfo = await cli(s.server, ["session", "adb", id]);
-    const access = adbInfo.json as { host: string; port: number; serial: string };
+    const adbInfo = await cli(s.server, ["session", "access", id]);
+    const access = adbInfo.json as { kind: string; host: string; port: number; serial: string };
+    expect(access.kind).toBe("adb");
     expect(access.serial).toMatch(/^emulator-\d+$/);
     expect(access.port).toBeGreaterThan(0);
 

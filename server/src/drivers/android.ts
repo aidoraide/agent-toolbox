@@ -5,6 +5,7 @@ import path from "node:path";
 
 import { AppError } from "../errors";
 import {
+  type DeviceAccess,
   type DeviceDriver,
   type DeviceHandle,
   type DeviceVerb,
@@ -259,13 +260,13 @@ export class AndroidDriver implements DeviceDriver {
     this.writePersisted(this.readPersisted().filter((p) => p.ref !== ref));
   }
 
-  adbAccess(handle: DeviceHandle): { host: string; port: number; serial: string } | null {
+  deviceAccess(handle: DeviceHandle): DeviceAccess | null {
     const instance = this.instances.get(handle.instanceId);
     if (!instance) return null;
     // The broker's adb server (default 5037) already owns this emulator. Agents
     // point ADB_SERVER_SOCKET here and use `adb -s <serial>`.
     const port = Number(process.env.ANDROID_ADB_SERVER_PORT ?? 5037);
-    return { host: "127.0.0.1", port, serial: instance.serial };
+    return { kind: "adb", host: "127.0.0.1", port, serial: instance.serial };
   }
 
   instanceCount(): number {

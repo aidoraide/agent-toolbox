@@ -1,4 +1,5 @@
 import {
+  type DeviceAccess,
   type DeviceDriver,
   type DeviceHandle,
   type DeviceVerb,
@@ -196,8 +197,8 @@ export class FakeDriver implements DeviceDriver {
     }
   }
 
-  adbAccess(): { host: string; port: number; serial: string } | null {
-    return null; // the fake driver has no real adb interface
+  deviceAccess(): DeviceAccess | null {
+    return null; // the fake driver has no real device interface
   }
 
   instanceCount(): number {

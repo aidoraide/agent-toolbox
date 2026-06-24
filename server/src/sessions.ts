@@ -2,6 +2,7 @@ import type { Clock } from "./clock";
 import type { ServerConfig } from "./config";
 import { AppError } from "./errors";
 import type {
+  DeviceAccess,
   DeviceDriver,
   DeviceHandle,
   DeviceVerb,
@@ -10,12 +11,6 @@ import type {
   TemplateConfig,
 } from "./drivers/driver";
 import { AsyncQueue } from "./util/async-queue";
-
-export interface AdbAccess {
-  host: string;
-  port: number;
-  serial: string;
-}
 
 export type WaitEvent =
   | { status: "queued"; position: number }
@@ -33,7 +28,7 @@ interface Session {
   expiresAt: number;
   ttlMs: number;
   listeners: Set<(event: WaitEvent) => void>;
-  adb: AdbAccess | null;
+  access: DeviceAccess | null;
 }
 
 export interface SessionView {
@@ -44,7 +39,7 @@ export interface SessionView {
   leasedAt?: string;
   expiresAt?: string;
   position?: number;
-  adb?: AdbAccess;
+  access?: DeviceAccess;
 }
 
 export class SessionManager {
@@ -89,7 +84,7 @@ export class SessionManager {
       expiresAt: now + (ttlMs ?? this.config.ttlMs),
       ttlMs: ttlMs ?? this.config.ttlMs,
       listeners: new Set(),
-      adb: null,
+      access: null,
     };
     this.sessions.set(session.id, session);
 
@@ -140,12 +135,12 @@ export class SessionManager {
     });
   }
 
-  getAdb(id: string): AdbAccess {
+  getAccess(id: string): DeviceAccess {
     const session = this.requireActive(id);
-    if (!session.adb) {
-      throw new AppError("adb_unavailable", `Session ${id} has no adb interface`);
+    if (!session.access) {
+      throw new AppError("access_unavailable", `Session ${id} has no direct device access`);
     }
-    return session.adb;
+    return session.access;
   }
 
   get(id: string): SessionView {
@@ -287,9 +282,9 @@ export class SessionManager {
       await this.fillSlots(session.platform);
       throw err;
     }
-    // Record how to reach this device over adb (shared adb server + serial), if
-    // it has an adb interface.
-    session.adb = this.driver.adbAccess(session.handle);
+    // Record how a client attaches its own toolchain to this device (adb server
+    // + serial on Android, UDID on iOS), if the platform supports it.
+    session.access = this.driver.deviceAccess(session.handle);
     session.expiresAt = this.clock.now() + session.ttlMs;
     this.notify(session, {
       status: "active",
@@ -300,7 +295,7 @@ export class SessionManager {
 
   private async remove(session: Session, reason: "gone"): Promise<void> {
     const platform = session.platform;
-    session.adb = null;
+    session.access = null;
     if (session.status === "active" && session.handle) {
       await this.driver.destroy(session.handle);
     } else {
@@ -380,7 +375,7 @@ export class SessionManager {
     if (session.status === "active") {
       base.leasedAt = session.leasedAt ? this.clock.toIso(session.leasedAt) : undefined;
       base.expiresAt = this.clock.toIso(session.expiresAt);
-      if (session.adb) base.adb = session.adb;
+      if (session.access) base.access = session.access;
     } else {
       base.position = this.positionOf(session);
     }

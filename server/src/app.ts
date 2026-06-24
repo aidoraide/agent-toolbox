@@ -154,9 +154,9 @@ export async function buildApp(config: ServerConfig): Promise<BuiltApp> {
     const { id } = request.params as { id: string };
     return sessions.heartbeat(id);
   });
-  app.get("/sessions/:id/adb", async (request) => {
+  app.get("/sessions/:id/access", async (request) => {
     const { id } = request.params as { id: string };
-    return sessions.getAdb(id);
+    return sessions.getAccess(id);
   });
   app.get("/sessions/:id/wait", async (request, reply) => {
     const { id } = request.params as { id: string };
