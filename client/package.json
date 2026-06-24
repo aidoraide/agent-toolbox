@@ -1,0 +1,21 @@
+{
+  "name": "@agent-toolbox/client",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "bin": {
+    "toolbox": "./src/index.ts"
+  },
+  "scripts": {
+    "start": "tsx src/index.ts",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "zod": "^3.23.8"
+  },
+  "devDependencies": {
+    "@types/node": "^22.5.0",
+    "tsx": "^4.19.0",
+    "typescript": "^5.5.4"
+  }
+}
