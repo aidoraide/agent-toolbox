@@ -83,8 +83,10 @@ export async function run(argv: string[]): Promise<RunResult> {
   const flush = () => (out.length ? `${out.join("\n")}\n` : "");
 
   const server = resolveServer(typeof flags.server === "string" ? flags.server : undefined);
+  // Default is generous because `session create` blocks until the device boots
+  // (a cold emulator can take 60-90s). Override with --timeout for tighter ops.
   const timeoutMs =
-    typeof flags.timeout === "string" ? Number(flags.timeout) : 30_000;
+    typeof flags.timeout === "string" ? Number(flags.timeout) : 120_000;
 
   try {
     await dispatch({ positionals, flags, server, timeoutMs, emit });

@@ -1,4 +1,4 @@
-import { execFile } from "node:child_process";
+import { execFile, spawn } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -24,17 +24,36 @@ export function emulatorPath(): string {
   return path.join(sdkRoot(), "emulator", "emulator");
 }
 
-// Pick the highest-versioned build-tools dir and return its aapt2 (for reading
-// an APK's package name). Returns null if build-tools are not installed.
-export function aapt2Path(): string | null {
+// Resolve a tool from the highest-versioned build-tools dir (aapt2, zipalign,
+// apksigner). Returns null if not installed.
+export function buildToolPath(name: string): string | null {
   const buildTools = path.join(sdkRoot(), "build-tools");
   if (!fs.existsSync(buildTools)) return null;
   const versions = fs
     .readdirSync(buildTools)
-    .filter((name) => /^\d/.test(name))
+    .filter((entry) => /^\d/.test(entry))
     .sort((a, b) => b.localeCompare(a, undefined, { numeric: true }));
   for (const version of versions) {
-    const candidate = path.join(buildTools, version, "aapt2");
+    const candidate = path.join(buildTools, version, name);
+    if (fs.existsSync(candidate)) return candidate;
+  }
+  return null;
+}
+
+export function aapt2Path(): string | null {
+  return buildToolPath("aapt2");
+}
+
+// Newest installed platform's android.jar (for linking a fixture APK).
+export function androidJar(): string | null {
+  const platforms = path.join(sdkRoot(), "platforms");
+  if (!fs.existsSync(platforms)) return null;
+  const versions = fs
+    .readdirSync(platforms)
+    .filter((entry) => entry.startsWith("android-"))
+    .sort((a, b) => b.localeCompare(a, undefined, { numeric: true }));
+  for (const version of versions) {
+    const candidate = path.join(platforms, version, "android.jar");
     if (fs.existsSync(candidate)) return candidate;
   }
   return null;
@@ -65,6 +84,28 @@ export async function run(
       code: typeof e.code === "number" ? e.code : 1,
     };
   }
+}
+
+// Binary-safe exec: collects stdout as raw bytes (never utf8-decoded), needed
+// for screencap and other binary output that execFile would corrupt.
+export function runBinary(file: string, args: string[], timeoutMs = 30_000): Promise<Buffer> {
+  return new Promise((resolve, reject) => {
+    const child = spawn(file, args);
+    const chunks: Buffer[] = [];
+    const timer = setTimeout(() => {
+      child.kill("SIGKILL");
+      reject(new Error(`${file} timed out`));
+    }, timeoutMs);
+    child.stdout.on("data", (chunk: Buffer) => chunks.push(chunk));
+    child.on("error", (err) => {
+      clearTimeout(timer);
+      reject(err);
+    });
+    child.on("close", () => {
+      clearTimeout(timer);
+      resolve(Buffer.concat(chunks));
+    });
+  });
 }
 
 export async function adb(serial: string | null, args: string[], timeoutMs?: number): Promise<ExecResult> {

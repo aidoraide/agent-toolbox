@@ -16,7 +16,7 @@ import {
   type ResetMode,
   type TemplateConfig,
 } from "./driver";
-import { aapt2Path, adb, adbPath, emulatorPath, listAvds, run } from "./sdk";
+import { aapt2Path, adb, adbPath, emulatorPath, listAvds, run, runBinary } from "./sdk";
 
 interface AndroidInstance {
   instanceId: string;
@@ -156,12 +156,7 @@ export class AndroidDriver implements DeviceDriver {
 
   async screenshot(handle: DeviceHandle): Promise<Buffer> {
     const instance = this.require(handle);
-    const result = await run(
-      adbPath(),
-      ["-s", instance.serial, "exec-out", "screencap", "-p"],
-      { timeoutMs: 30_000 },
-    );
-    return Buffer.from(result.stdout, "binary");
+    return runBinary(adbPath(), ["-s", instance.serial, "exec-out", "screencap", "-p"], 30_000);
   }
 
   async *logs(handle: DeviceHandle, signal: AbortSignal): AsyncIterable<LogEvent> {

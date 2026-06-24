@@ -11,6 +11,8 @@
     "dev": "tsx watch src/index.ts",
     "test": "vitest run",
     "test:watch": "vitest",
+    "test:real:android": "RUN_REAL_ANDROID=1 vitest run --config vitest.real.config.ts",
+    "test:real:ios": "RUN_REAL_IOS=1 vitest run --config vitest.real.config.ts",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
