@@ -59,18 +59,22 @@ command surface.
 ## Tests
 
 ```bash
-cd server && npm test       # 76 fake-tier cases (any OS, no real devices), ~2s
+cd server && npm test                 # 76 fake-tier cases (any OS, no devices), ~1s
+cd server && npm run test:real:android # boots real emulators (Mac + Android SDK)
+cd server && npm run test:real:ios     # boots real simulators (Mac + Xcode)
 ```
 
-The `[real]`/`[both]` tiers in `TEST_SPEC.md` exercise actual emulators/simulators
-on a Mac runner and validate the real drivers against the same contract the
-FakeDriver is tested on. They land with the real driver implementations.
+The real suites are gated (`RUN_REAL_ANDROID` / `RUN_REAL_IOS`) and boot one
+device at a time. A global teardown kills/deletes any device we started, even on
+failure — and only ones we started (matched by our `-read-only` emulator flag /
+`agtbx-` simulator name prefix). The default `npm test` never boots anything.
 
 ## Status
 
 - ✅ Server core: driver interface, FakeDriver, session/queue/reaper, build cache, reconciliation
 - ✅ Client CLI: full command surface, JSON-only output
 - ✅ Fake-tier test suite (76 cases) green
-- ⬜ Real Android driver (AVD pool + adb proxy)
-- ⬜ Real iOS driver (simctl clone + idb proxy)
-- ⬜ `[real]`/`[both]` test tiers on a Mac runner
+- ✅ Real Android driver (read-only emulator pool + adb proxy) — 13 real tests green
+- ✅ Real iOS driver (simctl create/boot/erase + spawn proxy) — 13 real tests green
+- ⬜ 2-VM+ concurrency at scale (gated behind RUN_REAL_ANDROID_CONCURRENCY today)
+- ⬜ CI wiring for the real tiers on a Mac runner

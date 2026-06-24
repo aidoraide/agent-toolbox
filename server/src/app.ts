@@ -7,6 +7,7 @@ import { ManualClock, SystemClock, type Clock } from "./clock";
 import type { ServerConfig } from "./config";
 import { AndroidDriver } from "./drivers/android";
 import { FakeDriver } from "./drivers/fake";
+import { IosDriver } from "./drivers/ios";
 import type { DeviceDriver, InputSpec, ResetMode } from "./drivers/driver";
 import { AppError, errorBody } from "./errors";
 import { reconcile } from "./reconcile";
@@ -82,7 +83,9 @@ export async function buildApp(config: ServerConfig): Promise<BuiltApp> {
   const driver: DeviceDriver =
     config.driver === "android"
       ? new AndroidDriver(config.cacheDir, config.tagPrefix)
-      : new FakeDriver(config.tagPrefix, config.seedInstances);
+      : config.driver === "ios"
+        ? new IosDriver(config.tagPrefix)
+        : new FakeDriver(config.tagPrefix, config.seedInstances);
 
   // Reconcile orphans before anything else can lease.
   await reconcile(driver);
