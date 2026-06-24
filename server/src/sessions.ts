@@ -126,7 +126,10 @@ export class SessionManager {
     mode: ResetMode,
   ): Promise<{ sessionId: string; status: "active"; mode: ResetMode }> {
     const session = this.requireActive(id);
-    await this.driver.reset(session.handle as DeviceHandle, mode);
+    if (!session.handle) {
+      throw new AppError("session_not_active", `Session ${id} is still booting`);
+    }
+    await this.driver.reset(session.handle, mode);
     this.touch(session);
     return { sessionId: id, status: "active", mode };
   }
@@ -141,6 +144,10 @@ export class SessionManager {
   // capability. Any device op also counts as a heartbeat.
   resolveForVerb(id: string, verb: DeviceVerb): { handle: DeviceHandle; platform: Platform } {
     const session = this.requireActive(id);
+    if (!session.handle) {
+      // Slot reserved but the device is still booting.
+      throw new AppError("session_not_active", `Session ${id} is still booting`);
+    }
     if (!this.driver.supports(session.platform, verb)) {
       throw new AppError(
         "unsupported_on_platform",
@@ -209,9 +216,22 @@ export class SessionManager {
   }
 
   private async activate(session: Session): Promise<void> {
-    session.handle = await this.driver.lease(session.template);
+    // Reserve the slot SYNCHRONOUSLY (before the async boot) by marking the
+    // session active up front. activeCount() counts status === "active", so
+    // concurrent create()/fillSlots() calls see this reservation immediately and
+    // the per-platform cap is never exceeded — even when driver.lease() blocks
+    // for a real device boot. The handle is null until the boot completes.
     session.status = "active";
     session.leasedAt = this.clock.now();
+    try {
+      session.handle = await this.driver.lease(session.template);
+    } catch (err) {
+      // Boot failed — release the reservation so the slot frees up.
+      this.sessions.delete(session.id);
+      this.notify(session, { status: "gone" });
+      await this.fillSlots(session.platform);
+      throw err;
+    }
     session.expiresAt = this.clock.now() + session.ttlMs;
     this.notify(session, {
       status: "active",

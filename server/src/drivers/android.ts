@@ -48,6 +48,10 @@ export class AndroidDriver implements DeviceDriver {
   private readonly statePath: string;
   private readonly tagPrefix: string;
   private counter = 0;
+  // Ports we've handed out (or that external emulators already occupy). Reserved
+  // synchronously so concurrent leases never pick the same port.
+  private readonly reservedPorts = new Set<number>();
+  private externalScan: Promise<void> | null = null;
 
   constructor(cacheDir: string, tagPrefix: string) {
     this.tagPrefix = tagPrefix;
@@ -72,14 +76,25 @@ export class AndroidDriver implements DeviceDriver {
       );
     }
 
-    const port = await this.findFreePort();
+    // Seed external/in-use ports once (best-effort), then reserve a port
+    // synchronously — no await between picking and reserving, so concurrent
+    // leases get distinct ports.
+    await this.ensureExternalPorts();
+    const port = this.reservePort();
     const serial = `emulator-${port}`;
     this.counter += 1;
     const instanceId = `android-${port}`;
     const ref = `${this.tagPrefix}${port}`;
 
-    this.bootEmulator(template.ref, port);
-    await this.waitForBoot(serial);
+    try {
+      this.bootEmulator(template.ref, port);
+      await this.waitForBoot(serial);
+    } catch (err) {
+      // Free the reservation and kill any half-booted emulator.
+      await adb(serial, ["emu", "kill"]).catch(() => undefined);
+      this.reservedPorts.delete(port);
+      throw err;
+    }
 
     const instance: AndroidInstance = {
       instanceId,
@@ -121,6 +136,7 @@ export class AndroidDriver implements DeviceDriver {
     await adb(instance.serial, ["emu", "kill"]);
     await this.waitForGone(instance.serial);
     this.instances.delete(handle.instanceId);
+    this.reservedPorts.delete(instance.port);
     this.persist();
   }
 
@@ -225,6 +241,7 @@ export class AndroidDriver implements DeviceDriver {
     const match = persisted.find((p) => p.ref === ref);
     if (!match) return;
     await adb(`emulator-${match.port}`, ["emu", "kill"]);
+    this.reservedPorts.delete(match.port);
     for (const [id, instance] of this.instances) {
       if (instance.ref === ref) this.instances.delete(id);
     }
@@ -249,6 +266,9 @@ export class AndroidDriver implements DeviceDriver {
         "-no-boot-anim",
         "-no-snapshot",
         "-gpu", "swiftshader_indirect",
+        // Unique marker in the process args so cleanup can identify OUR
+        // emulators precisely — never the user's own.
+        "-prop", "agtbx.managed=1",
       ],
       { detached: true, stdio: "ignore" },
     );
@@ -275,13 +295,28 @@ export class AndroidDriver implements DeviceDriver {
     }
   }
 
-  private async findFreePort(): Promise<number> {
-    const devices = (await adb(null, ["devices"])).stdout;
-    const used = new Set<number>();
-    for (const m of devices.matchAll(/emulator-(\d+)/g)) used.add(Number(m[1]));
-    for (const instance of this.instances.values()) used.add(instance.port);
+  // Seed reservedPorts with any emulator already attached (the user's own, or
+  // ours from a prior run). Runs at most once; safe to await concurrently.
+  private async ensureExternalPorts(): Promise<void> {
+    if (!this.externalScan) {
+      this.externalScan = (async () => {
+        const devices = (await adb(null, ["devices"])).stdout;
+        for (const m of devices.matchAll(/emulator-(\d+)/g)) {
+          this.reservedPorts.add(Number(m[1]));
+        }
+      })();
+    }
+    await this.externalScan;
+  }
+
+  // Synchronous: the caller must not await between this returning and using the
+  // port, so concurrent leases can't collide.
+  private reservePort(): number {
     for (let port = PORT_RANGE_START; port <= PORT_RANGE_END; port += 2) {
-      if (!used.has(port)) return port;
+      if (!this.reservedPorts.has(port)) {
+        this.reservedPorts.add(port);
+        return port;
+      }
     }
     throw new AppError("invalid_argument", "No free emulator port available");
   }

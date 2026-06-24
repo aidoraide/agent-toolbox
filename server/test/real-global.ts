@@ -6,9 +6,11 @@ import { execFileSync } from "node:child_process";
 // it, so they're never touched.
 export default function setup(): () => void {
   return () => {
-    // Android: kill any emulator we started (matched by our unique -read-only flag).
+    // Android: kill ONLY emulators we started — matched by the unique
+    // `agtbx.managed=1` marker we pass at boot. Never touches the user's own
+    // emulators, even if they also use -read-only.
     try {
-      execFileSync("pkill", ["-f", "qemu-system.*-read-only.*-avd"], { stdio: "ignore" });
+      execFileSync("pkill", ["-f", "agtbx.managed=1"], { stdio: "ignore" });
     } catch {
       // pkill exits non-zero when nothing matched — that's the good case.
     }

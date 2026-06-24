@@ -4,7 +4,7 @@ import path from "node:path";
 
 import { afterAll, beforeAll, describe, expect, test } from "vitest";
 
-import { listAvds } from "../src/drivers/sdk";
+import { adbPath, listAvds } from "../src/drivers/sdk";
 import { advanceClock, cli, startServer, type TestServer } from "./harness";
 import { buildFixtureApk } from "./fixtures";
 
@@ -209,36 +209,104 @@ suite("real android — crash recovery (reconciliation)", () => {
   });
 });
 
-// Boots TWO emulators at once — gated separately so the default real run stays
-// single-VM-at-a-time. Enable with RUN_REAL_ANDROID_CONCURRENCY=1.
+// Boots a pool of real emulators (POOL at once) under contention from many
+// agents. Gated separately (RUN_REAL_ANDROID_CONCURRENCY=1) since it runs
+// several emulators simultaneously.
 const concurrencySuite = RUN && process.env.RUN_REAL_ANDROID_CONCURRENCY === "1" ? describe : describe.skip;
-concurrencySuite("real android — concurrency", () => {
-  test("two concurrent leases boot two isolated emulators", async () => {
-    const s = await startServer({
-      driver: "android",
-      templates: [TEMPLATE],
-      maxByPlatform: { android: 2, ios: 0 },
-    });
-    try {
-      const [a, b] = await Promise.all([
-        cli(s.server, ["session", "create", "--template", "medium"]),
-        cli(s.server, ["session", "create", "--template", "medium"]),
-      ]);
-      expect(a.json?.status).toBe("active");
-      expect(b.json?.status).toBe("active");
-      // Distinct devices: each shell hits its own emulator.
-      const ra = await cli(s.server, ["device", "shell", a.json?.sessionId as string, "getprop ro.boot.qemu"]);
-      const rb = await cli(s.server, ["device", "shell", b.json?.sessionId as string, "getprop ro.boot.qemu"]);
-      expect(ra.json?.exitCode).toBe(0);
-      expect(rb.json?.exitCode).toBe(0);
-      await Promise.all([
-        cli(s.server, ["session", "release", a.json?.sessionId as string]),
-        cli(s.server, ["session", "release", b.json?.sessionId as string]),
-      ]);
-      const cap = await cli(s.server, ["capacity"]);
-      expect((cap.json as any).android).toMatchObject({ active: 0, queued: 0 });
-    } finally {
-      await s.stop();
-    }
-  });
+
+const POOL = Number(process.env.AGTBX_TEST_POOL ?? 3);
+const AGENTS = Number(process.env.AGTBX_TEST_AGENTS ?? 10);
+
+const sleep = (ms: number) => new Promise((res) => setTimeout(res, ms));
+
+// One agent's full lifecycle: wait for its slot, prove the device it was handed
+// is its own (write a unique token, read it back), then release.
+async function driveAgent(
+  server: string,
+  created: { sessionId: string; status: string },
+  i: number,
+): Promise<{ i: number; token: string; read: string; ok: boolean }> {
+  const id = created.sessionId;
+  if (created.status === "queued") {
+    await cli(server, ["session", "wait", id]); // blocks until promoted to active
+  }
+  const token = `agtbx_${i}_${Date.now()}`;
+  await cli(server, ["device", "shell", id, `setprop debug.agtbx.token ${token}`]);
+  // Give any mis-routing a window to surface before we read back.
+  await sleep(1500);
+  const r = await cli(server, ["device", "shell", id, "getprop debug.agtbx.token"]);
+  const read = ((r.json?.stdout as string) ?? "").trim();
+  await cli(server, ["session", "release", id]);
+  return { i, token, read, ok: read === token };
+}
+
+concurrencySuite(`real android — ${AGENTS} agents / ${POOL} emulators`, () => {
+  test(
+    "agents queue correctly and each is routed to its own isolated device",
+    async () => {
+      const s = await startServer({
+        driver: "android",
+        templates: [TEMPLATE],
+        maxByPlatform: { android: POOL, ios: 0 },
+      });
+
+      let peakActive = 0;
+      let polling = true;
+      const poller = (async () => {
+        while (polling) {
+          const c = await cli(s.server, ["capacity"]);
+          peakActive = Math.max(peakActive, (c.json as any).android.active as number);
+          await sleep(400);
+        }
+      })();
+
+      try {
+        // Phase 1 — fire all leases at once. The first POOL boot and return
+        // active; the rest return queued immediately.
+        const creates = await Promise.all(
+          Array.from({ length: AGENTS }, () => cli(s.server, ["session", "create", "--template", "medium"])),
+        );
+        const statuses = creates.map((r) => r.json?.status);
+        expect(statuses.filter((x) => x === "active").length).toBe(POOL);
+        expect(statuses.filter((x) => x === "queued").length).toBe(AGENTS - POOL);
+
+        // All sessions are distinct.
+        const ids = creates.map((r) => r.json?.sessionId as string);
+        expect(new Set(ids).size).toBe(AGENTS);
+
+        // Phase 2 — drive every agent to completion concurrently. Queued agents
+        // wait, get promoted as slots free, do their isolation check, release.
+        const results = await Promise.all(
+          creates.map((c, i) => driveAgent(s.server, c.json as { sessionId: string; status: string }, i)),
+        );
+
+        // Correctness: every agent read back exactly the token it wrote on its
+        // own device — no cross-talk, no mismatched routing.
+        for (const r of results) {
+          expect(r.read).toBe(r.token);
+        }
+        expect(results.every((r) => r.ok)).toBe(true);
+        // Tokens were all unique, so this also proves no two agents collided.
+        expect(new Set(results.map((r) => r.token)).size).toBe(AGENTS);
+
+        // The cap was never exceeded, and the pool was fully utilized.
+        expect(peakActive).toBeLessThanOrEqual(POOL);
+        expect(peakActive).toBe(POOL);
+
+        // Everything drained — no leaked slots.
+        const cap = await cli(s.server, ["capacity"]);
+        expect((cap.json as any).android).toMatchObject({ active: 0, queued: 0 });
+
+        // No leaked emulators.
+        const { execFileSync } = await import("node:child_process");
+        const devices = execFileSync(adbPath(), ["devices"]).toString();
+        expect(devices).not.toMatch(/emulator-\d+\s+device/);
+      } finally {
+        polling = false;
+        await poller;
+        await s.stop();
+      }
+    },
+    900_000,
+  );
 });
