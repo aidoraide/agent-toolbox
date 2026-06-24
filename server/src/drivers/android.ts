@@ -51,6 +51,9 @@ export class AndroidDriver implements DeviceDriver {
   // Ports we've handed out (or that external emulators already occupy). Reserved
   // synchronously so concurrent leases never pick the same port.
   private readonly reservedPorts = new Set<number>();
+  // Ports reserved and mid-boot — recorded in the state file BEFORE booting so a
+  // server crash during boot is still recoverable by the next run's reconcile.
+  private readonly pendingPorts = new Map<number, { ref: string; avd: string }>();
   private externalScan: Promise<void> | null = null;
 
   constructor(cacheDir: string, tagPrefix: string) {
@@ -86,6 +89,11 @@ export class AndroidDriver implements DeviceDriver {
     const instanceId = `android-${port}`;
     const ref = `${this.tagPrefix}${port}`;
 
+    // Record intent-to-boot in the state file before launching, so a crash
+    // mid-boot leaves a trail the next run's reconcile can clean up.
+    this.pendingPorts.set(port, { ref, avd: template.ref });
+    this.persist();
+
     try {
       this.bootEmulator(template.ref, port);
       await this.waitForBoot(serial);
@@ -93,6 +101,8 @@ export class AndroidDriver implements DeviceDriver {
       // Free the reservation and kill any half-booted emulator.
       await adb(serial, ["emu", "kill"]).catch(() => undefined);
       this.reservedPorts.delete(port);
+      this.pendingPorts.delete(port);
+      this.persist();
       throw err;
     }
 
@@ -104,6 +114,7 @@ export class AndroidDriver implements DeviceDriver {
       avd: template.ref,
       templateSlug: template.slug,
     };
+    this.pendingPorts.delete(port);
     this.instances.set(instanceId, instance);
     this.persist();
 
@@ -337,11 +348,10 @@ export class AndroidDriver implements DeviceDriver {
   }
 
   private persist(): void {
-    const data: PersistedInstance[] = [...this.instances.values()].map((i) => ({
-      ref: i.ref,
-      port: i.port,
-      avd: i.avd,
-    }));
+    const data: PersistedInstance[] = [
+      ...[...this.instances.values()].map((i) => ({ ref: i.ref, port: i.port, avd: i.avd })),
+      ...[...this.pendingPorts.entries()].map(([port, v]) => ({ ref: v.ref, port, avd: v.avd })),
+    ];
     this.writePersisted(data);
   }
 
