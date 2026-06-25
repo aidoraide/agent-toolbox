@@ -1,11 +1,15 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <!--
-  Keep the agent-toolbox broker running at login so every `dev <feature>` env has
-  it available. Install:
+  Keep the agent-toolbox broker running at login. Install:
     cp scripts/com.agenttoolbox.broker.plist ~/Library/LaunchAgents/
     launchctl load ~/Library/LaunchAgents/com.agenttoolbox.broker.plist
   Logs: /tmp/agtbx-broker.log   Stop: launchctl unload ~/Library/LaunchAgents/com.agenttoolbox.broker.plist
+
+  Runs the broker through a login shell (`bash -lc`) so the user's profile sets
+  PATH (node/nvm, Android SDK) and $HOME expands at runtime — no machine-specific
+  paths baked in. Assumes the repo lives at $HOME/code/agent-toolbox; edit the
+  command if yours is elsewhere.
 -->
 <plist version="1.0">
 <dict>
@@ -14,7 +18,8 @@
   <key>ProgramArguments</key>
   <array>
     <string>/bin/bash</string>
-    <string>/Users/aidanrosswood/code/agent-toolbox/scripts/broker.sh</string>
+    <string>-lc</string>
+    <string>exec "$HOME/code/agent-toolbox/scripts/broker.sh"</string>
   </array>
   <key>RunAtLoad</key>
   <true/>
@@ -24,14 +29,5 @@
   <string>/tmp/agtbx-broker.log</string>
   <key>StandardErrorPath</key>
   <string>/tmp/agtbx-broker.log</string>
-  <key>EnvironmentVariables</key>
-  <dict>
-    <key>HOME</key>
-    <string>/Users/aidanrosswood</string>
-    <key>ANDROID_HOME</key>
-    <string>/Users/aidanrosswood/Library/Android/sdk</string>
-    <key>PATH</key>
-    <string>/Users/aidanrosswood/.nvm/versions/node/v24.0.0/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
-  </dict>
 </dict>
 </plist>
