@@ -81,8 +81,14 @@ fixed (see `scripts/` + `drivers/android.ts`):
   (901M) → the 222MB dev-client install failed with "not enough space".
 - **Bundle/launch**: harness pre-warms the Metro bundle and retries `device.launchApp`
   so a cold JS compile / cold device can't time out the run.
-- **Warm boot (speed)**: leases restore a `default_boot` snapshot in ~4s (vs ~36s);
-  `broker.sh` ensures the snapshot exists; `TOOLBOX_EMULATOR_COLD=1` forces cold.
+- **Warm boot (speed), server-owned**: the lease path self-provisions — the
+  `AndroidDriver` creates the AVD if missing, builds the `default_boot` snapshot
+  once if absent, then boots warm (~7s vs ~55s first-lease) and **validates the
+  device before delivering it** (settle gate, with a cold-boot fallback if the
+  warm boot doesn't validate — so a client never gets a degraded device). No
+  setup script needed; `TOOLBOX_EMULATOR_COLD=1` forces cold. Verified: AVD
+  deleted → one `session create` recreated AVD + snapshot + warm device (55s),
+  next lease 7s.
 
 ### Gotchas found while wiring the real app
 - **Emulator GPU**: the broker booted with `-gpu swiftshader_indirect` (software).

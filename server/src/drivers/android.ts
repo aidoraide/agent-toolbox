@@ -17,7 +17,7 @@ import {
   type ResetMode,
   type TemplateConfig,
 } from "./driver";
-import { aapt2Path, adb, adbPath, emulatorPath, listAvds, run, runBinary } from "./sdk";
+import { aapt2Path, adb, adbPath, createAvd, emulatorPath, listAvds, run, runBinary } from "./sdk";
 import { openProxy, type Proxy } from "../util/tunnel";
 
 interface AndroidInstance {
@@ -60,6 +60,9 @@ export class AndroidDriver implements DeviceDriver {
   // server crash during boot is still recoverable by the next run's reconcile.
   private readonly pendingPorts = new Map<number, { ref: string; avd: string }>();
   private externalScan: Promise<void> | null = null;
+  // Per-AVD provisioning (create AVD + warm snapshot), run at most once and
+  // shared by concurrent leases. Cleared on failure so a later lease can retry.
+  private readonly provisioning = new Map<string, Promise<void>>();
 
   constructor(cacheDir: string, tagPrefix: string) {
     this.tagPrefix = tagPrefix;
@@ -76,13 +79,12 @@ export class AndroidDriver implements DeviceDriver {
   }
 
   async lease(template: TemplateConfig): Promise<DeviceHandle> {
-    const avds = await listAvds();
-    if (!avds.includes(template.ref)) {
-      throw new AppError(
-        "template_not_found",
-        `AVD '${template.ref}' for template '${template.slug}' not found. Available: ${avds.join(", ")}`,
-      );
-    }
+    // Make leasing self-sufficient: ensure the AVD exists (create it if not) and
+    // that warm-boot bytes are cached (create the snapshot once if missing), so a
+    // lease ALWAYS yields a warm, validated device — the broker owns the device
+    // experience, not an external setup script. First lease for an AVD pays the
+    // one-time cost; the rest restore in seconds.
+    await this.ensureProvisioned(template);
 
     // Seed external/in-use ports once (best-effort), then reserve a port
     // synchronously — no await between picking and reserving, so concurrent
@@ -101,9 +103,7 @@ export class AndroidDriver implements DeviceDriver {
 
     let adbProxy: Proxy | null = null;
     try {
-      this.bootEmulator(template.ref, port);
-      await this.waitForBoot(serial);
-      await this.disableAnimations(serial);
+      await this.bootValidated(template.ref, serial, port);
       // Expose the emulator's adb daemon (console port + 1) on a host-reachable
       // 0.0.0.0 port so a container can `adb connect host.docker.internal:<port>`.
       adbProxy = await openProxy({ host: "127.0.0.1", port: port + 1 });
@@ -293,19 +293,132 @@ export class AndroidDriver implements DeviceDriver {
 
   // --- internals ----------------------------------------------------------
 
-  private bootEmulator(avd: string, port: number): void {
+  // Ensure the AVD exists and warm-boot bytes are cached. Runs once per AVD;
+  // concurrent leases await the same promise. On failure we drop the cache entry
+  // so the next lease retries rather than wedging forever.
+  private ensureProvisioned(template: TemplateConfig): Promise<void> {
+    let pending = this.provisioning.get(template.ref);
+    if (pending == null) {
+      pending = this.provisionTemplate(template.ref).catch((err: unknown) => {
+        this.provisioning.delete(template.ref);
+        throw err;
+      });
+      this.provisioning.set(template.ref, pending);
+    }
+    return pending;
+  }
+
+  private async provisionTemplate(ref: string): Promise<void> {
+    await this.ensureAvdExists(ref);
+    // Warm-boot guarantee: create the default_boot snapshot once if missing, so
+    // leases restore in seconds. Skipped in forced-cold mode (cold is reliable).
+    if (process.env.TOOLBOX_EMULATOR_COLD !== "1" && !this.hasSnapshot(ref)) {
+      await this.createWarmSnapshot(ref);
+    }
+  }
+
+  private async ensureAvdExists(ref: string): Promise<void> {
+    if ((await listAvds()).includes(ref)) return;
+    const image =
+      process.env.TOOLBOX_ANDROID_SYSTEM_IMAGE ??
+      "system-images;android-36.1;google_apis_playstore;arm64-v8a";
+    const device = process.env.TOOLBOX_ANDROID_DEVICE ?? "pixel_6";
+    const result = await createAvd(ref, image, device);
+    if (result.code !== 0 || !(await listAvds()).includes(ref)) {
+      throw new AppError(
+        "template_not_found",
+        `Could not create AVD '${ref}' from '${image}': ${(result.stderr || result.stdout).trim()}`,
+      );
+    }
+    // A roomy, clean-per-boot data partition: a default-sized one can't hold a
+    // large app + its dex/ART extraction.
+    this.setAvdDataPartition(ref, process.env.TOOLBOX_EMULATOR_PARTITION_MB ?? "6144");
+  }
+
+  private avdDir(ref: string): string {
+    return path.join(os.homedir(), ".android", "avd", `${ref}.avd`);
+  }
+
+  private setAvdDataPartition(ref: string, mb: string): void {
+    const cfg = path.join(this.avdDir(ref), "config.ini");
+    if (!fs.existsSync(cfg)) return;
+    const kept = fs
+      .readFileSync(cfg, "utf8")
+      .split("\n")
+      .filter((line) => !line.startsWith("disk.dataPartition.size="));
+    kept.push(`disk.dataPartition.size=${mb}M`);
+    fs.writeFileSync(cfg, `${kept.join("\n").trimEnd()}\n`);
+  }
+
+  private hasSnapshot(ref: string): boolean {
+    return fs.existsSync(path.join(this.avdDir(ref), "snapshots", "default_boot"));
+  }
+
+  // Build the default_boot quickboot snapshot: cold + writable boot, settle so it
+  // captures a READY device, save, shut down. One-time per AVD.
+  private async createWarmSnapshot(ref: string): Promise<void> {
+    await this.ensureExternalPorts();
+    const port = this.reservePort();
+    const serial = `emulator-${port}`;
+    try {
+      this.bootEmulator(ref, port, { cold: true, readOnly: false });
+      await this.waitForBoot(serial);
+      await sleep(15_000);
+      const saved = await adb(
+        serial,
+        ["emu", "avd", "snapshot", "save", "default_boot"],
+        120_000,
+      );
+      if (saved.code !== 0) {
+        throw new AppError(
+          "install_failed",
+          `Could not save default_boot snapshot for '${ref}': ${saved.stderr.trim()}`,
+        );
+      }
+    } finally {
+      await adb(serial, ["emu", "kill"]).catch(() => undefined);
+      await this.waitForGone(serial);
+      this.reservedPorts.delete(port);
+    }
+  }
+
+  // Boot and VALIDATE the device before it's handed to a client. Warm boot first;
+  // if that doesn't reach a settled state, don't deliver a degraded device — kill
+  // it and retry once cold (a clean from-scratch boot). Only a cold boot that also
+  // fails to settle propagates as an error.
+  private async bootValidated(avd: string, serial: string, port: number): Promise<void> {
+    try {
+      this.bootEmulator(avd, port);
+      await this.waitForBoot(serial);
+    } catch (warmErr) {
+      if (process.env.TOOLBOX_EMULATOR_COLD === "1") throw warmErr;
+      await adb(serial, ["emu", "kill"]).catch(() => undefined);
+      await this.waitForGone(serial);
+      this.bootEmulator(avd, port, { cold: true });
+      await this.waitForBoot(serial);
+    }
+    await this.disableAnimations(serial);
+  }
+
+  private bootEmulator(
+    avd: string,
+    port: number,
+    opts: { cold?: boolean; readOnly?: boolean } = {},
+  ): void {
     // Warm boot by default: with a `default_boot` quickboot snapshot present the
     // device restores in ~4s (vs ~30-40s cold) — `-read-only` loads it read-only,
     // so it stays warm AND ephemeral. Cold reliability does NOT depend on this:
     // set TOOLBOX_EMULATOR_COLD=1 to force `-no-snapshot` (and the lease is still
     // gated on a settled device + the harness retries launches). If no snapshot
-    // exists, a warm boot simply falls back to a cold one.
-    const cold = process.env.TOOLBOX_EMULATOR_COLD === "1";
+    // exists, a warm boot simply falls back to a cold one. The snapshot-builder
+    // boots cold + writable (readOnly: false) so it can SAVE the snapshot.
+    const cold = opts.cold ?? process.env.TOOLBOX_EMULATOR_COLD === "1";
+    const readOnly = opts.readOnly ?? true;
     const child = spawn(
       emulatorPath(),
       [
         "-avd", avd,
-        "-read-only",
+        ...(readOnly ? ["-read-only"] : []),
         "-port", String(port),
         "-no-window",
         "-no-audio",

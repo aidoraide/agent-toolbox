@@ -19,16 +19,9 @@ export TOOLBOX_PORT="$PORT"
 export TOOLBOX_MAX_ANDROID="${TOOLBOX_MAX_ANDROID:-3}"
 export TOOLBOX_TEMPLATES="${TOOLBOX_TEMPLATES:-$DEFAULT_TEMPLATES}"
 
-# Warm-boot guarantee: ensure the `default_boot` snapshot bytes exist so leases
-# boot in ~4s instead of cold. One-time (blocking) on first startup; thereafter
-# the snapshot is on disk. Skipped in forced-cold mode. Cold leases are reliable
-# regardless, so a failure here is non-fatal.
-SNAP_DIR="$HOME/.android/avd/${BROKER_AVD}.avd/snapshots/default_boot"
-if [ "${TOOLBOX_EMULATOR_COLD:-0}" != "1" ] && [ ! -d "$SNAP_DIR" ]; then
-  echo "[broker] no default_boot snapshot for $BROKER_AVD — creating it (one-time)"
-  bash "$ROOT/scripts/warm-avd.sh" "$BROKER_AVD" \
-    || echo "[broker] warm-avd failed (non-fatal; leases will boot cold)"
-fi
+# Note: the AVD and its warm-boot snapshot are provisioned by the SERVER on first
+# lease (create-if-missing), so leasing always yields a warm, validated device
+# with no setup script. scripts/warm-avd.sh remains as an optional manual primer.
 
 # Seed the branch=main APK into the registry once the server is healthy (only if
 # it isn't there already). Runs in the background; the registry persists to disk.

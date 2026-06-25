@@ -120,3 +120,43 @@ export async function listAvds(): Promise<string[]> {
     .map((line) => line.trim())
     .filter((line) => line.length > 0 && !line.startsWith("INFO"));
 }
+
+export function avdmanagerPath(): string | null {
+  const direct = [
+    path.join(sdkRoot(), "cmdline-tools", "latest", "bin", "avdmanager"),
+    path.join(sdkRoot(), "tools", "bin", "avdmanager"),
+  ];
+  for (const candidate of direct) if (fs.existsSync(candidate)) return candidate;
+  const cmdlineTools = path.join(sdkRoot(), "cmdline-tools");
+  if (fs.existsSync(cmdlineTools)) {
+    for (const dir of fs.readdirSync(cmdlineTools)) {
+      const candidate = path.join(cmdlineTools, dir, "bin", "avdmanager");
+      if (fs.existsSync(candidate)) return candidate;
+    }
+  }
+  return null;
+}
+
+// Create an AVD. `avdmanager` prompts "create a custom hardware profile? [no]"
+// even with -d, so we feed it "no" on stdin. Idempotent via --force.
+export async function createAvd(
+  name: string,
+  systemImage: string,
+  device: string,
+): Promise<ExecResult> {
+  const bin = avdmanagerPath();
+  if (bin == null) return { stdout: "", stderr: "avdmanager not found in SDK", code: 1 };
+  return new Promise((resolve) => {
+    const child = spawn(bin, [
+      "create", "avd", "-n", name, "-k", systemImage, "-d", device, "--force",
+    ]);
+    let stdout = "";
+    let stderr = "";
+    child.stdout.on("data", (d: Buffer) => (stdout += d.toString()));
+    child.stderr.on("data", (d: Buffer) => (stderr += d.toString()));
+    child.on("error", (e) => resolve({ stdout, stderr: String(e), code: 1 }));
+    child.on("close", (code) => resolve({ stdout, stderr, code: code ?? 0 }));
+    child.stdin.write("no\n");
+    child.stdin.end();
+  });
+}

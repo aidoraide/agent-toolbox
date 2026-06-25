@@ -174,21 +174,27 @@ toolbox device screenshot "$SID" -o failure.png                  # login? red bo
 
 The screenshot alone resolves most "why didn't it launch" questions in seconds.
 
-## 10. Speed comes last, as a layer
+## 10. Speed comes last — and lives server-side
 
-Only once the cold worst case is reliably green, add speed — and keep it strictly
-optional:
+Speed is a property of the **server/broker**, delivered transparently, not
+something each client wires up. The client asks for a device; the broker is
+responsible for handing back a *warm, validated* one. Make speed a layer you can
+remove without affecting correctness:
 
-- **Warm snapshots**: boot leases from a saved "booted + settled" snapshot (seconds
-  vs tens of seconds). Ensure the snapshot bytes exist before serving leases; if
-  they're missing, fall back to a cold boot — never make reliability depend on the
-  snapshot.
+- **Provision + warm on the server, at lease time.** The broker should create the
+  device template if missing, ensure warm-boot bytes exist (load a cached
+  snapshot, or build one the first time), boot warm, **validate it's actually
+  ready, and only then deliver it** — falling back to a clean cold boot if the
+  warm path doesn't validate. The client never sees a cold or half-ready device,
+  and never runs setup scripts. One `session create` returns a good device.
+- **Warm snapshots**: restore a "booted + settled" snapshot (seconds vs tens of
+  seconds). Reliability must never *depend* on the snapshot — missing/bad → cold.
 - **Pre-booted pool**: keep N devices warm and hand them out instantly.
 - **Parallelism**: the broker caps and queues concurrent leases; request what you
   need and let it schedule (`toolbox capacity` shows headroom).
 
 If a speed optimization ever introduces a flake, it has failed its one job —
-disable it and keep the reliable path.
+disable it and keep the reliable path. Reliability first, speed second, always.
 
 ---
 
