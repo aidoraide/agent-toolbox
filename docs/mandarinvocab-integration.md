@@ -77,8 +77,8 @@ fixed (see `scripts/` + `drivers/android.ts`):
 - **Readiness**: lease gates on a *settled* device (boot flags + package-manager
   responsive + settle), all best-effort so a probe can only help, never break leasing.
 - **Storage**: dedicated clean AVD **`agtbx-android`** (6G `<temp>` `/data`, ~5G free).
-  The borrowed `agtbx-android` had a bloated near-full `/data` (901M) → the
-  222MB dev-client install failed with "not enough space".
+  The previously-borrowed `Medium_Phone_API_36.1` had a bloated near-full `/data`
+  (901M) → the 222MB dev-client install failed with "not enough space".
 - **Bundle/launch**: harness pre-warms the Metro bundle and retries `device.launchApp`
   so a cold JS compile / cold device can't time out the run.
 - **Warm boot (speed)**: leases restore a `default_boot` snapshot in ~4s (vs ~36s);
