@@ -11,8 +11,7 @@ Mac host
   ├─ agent-toolbox broker server   0.0.0.0:4500   (ONE shared instance, driver=android)
   │     ├─ leases Android emulators (shared, capped/queued pool)
   │     └─ serves prebuilt APKs from its registry
-  ├─ per-feature Metro (Expo)      127.0.0.1:19xxx
-  └─ per-feature mac-bridge        127.0.0.1:132xx   (unchanged, still used for non-broker bits)
+  └─ per-feature Metro (Expo)      127.0.0.1:19xxx
 
 Container (per feature, via `dev <feature>`)
   └─ toolbox client ── HTTP ──> host.docker.internal:4500   (broker)
@@ -101,14 +100,15 @@ with zero per-feature setup (the rewritten `run-android-test.ts` defaults
      launchctl load ~/Library/LaunchAgents/com.agenttoolbox.broker.plist
      ```
 
-2. **The e2e changes live in `main`** — NEEDS YOU (I'm scoped to the worktree +
+2. **The branch changes live in `main`** — NEEDS YOU (I'm scoped to the worktree +
    this repo, can't touch `~/code/mandarinvocab`):
-   - Merge the `testing-sandbox` branch's two files to main:
-     `nextapp/src/scripts/detox/run-android-test.ts` (broker flow) and
-     `nextapp/tools/toolbox.cjs` (vendored client).
+   - Merge the `testing-sandbox` branch to main. It carries: the broker e2e flow
+     (`run-android-test.ts` + vendored `nextapp/tools/toolbox.cjs`) **and** the
+     full mac-bridge rip-out (`dev/`, `docker-compose.yml`, `start.sh`).
    - After that, every `dev <feature>` worktree branches from main → inherits
      them → e2e runs on the broker, reusing the cached main build (the Expo
-     dev-client just loads each feature's JS bundle from its own Metro).
+     dev-client just loads each feature's JS bundle from its own Metro), and no
+     vestigial mac-bridge can abort setup.
    - Nothing else per-feature: no compose/env/port changes (the broker URL is a
      fixed default; `host.docker.internal` + `EXPO_PORT` already exist per env).
 
@@ -116,8 +116,17 @@ with zero per-feature setup (the rewritten `run-android-test.ts` defaults
    client (`agent-toolbox/client && npm run build`) and copying `dist/index.cjs`
    into `nextapp/tools/toolbox.cjs` when the client changes.
 
+## mac-bridge removed
+The per-feature mac-bridge is **gone** (commit on `testing-sandbox`). It only ever
+ran `detox:build:android` + `manage-emulator`, both now served by the broker, and
+its sole caller (`run-android-test.ts`) already uses the broker. Removed across:
+`nextapp/src/scripts/mac-bridge{.ts,/}`, `dev/src/mac-bridge.ts` + its `dev.ts`
+call, the `macBridge` port (`ports.ts`/`shared.ts`/`metadata.ts`/`cleanup.ts`),
+`MAC_BRIDGE_URL` (`compose.ts` + `docker-compose.yml`), and `start.sh`'s
+mac-bridge bootstrap. This deletes a component that sat before compose-up and
+could abort `dev` on a health-check failure.
+
 ## Unchanged / coexisting
-- mac-bridge (per-feature 132xx) — still present; broker path no longer calls it.
 - The broker's `connectPort` proxy replaces `manage-emulator`'s `+10001` proxy.
-- Per-feature ports: nextapp 13000, nextappTest 13100, macBridge 13200,
-  emulator 5554, expo 19000 (dev/src/shared.ts) — untouched.
+- Per-feature ports now: nextapp 13000, nextappTest 13100, emulator 5554,
+  expo 19000 (`dev/src/shared.ts`) — `macBridge 13200` removed.
