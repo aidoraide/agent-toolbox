@@ -40,7 +40,7 @@ Container (per feature, via `dev <feature>`)
 - **Broker server**: `0.0.0.0:4500` on the Mac (fixed, shared). Containers reach
   it at `host.docker.internal:4500`. Started with
   `TOOLBOX_DRIVER=android TOOLBOX_HOST=0.0.0.0 TOOLBOX_PORT=4500 TOOLBOX_MAX_ANDROID=3
-   TOOLBOX_TEMPLATES='[{"slug":"android","platform":"android","name":"Android","version":1,"ref":"Medium_Phone_API_36.1"}]'`.
+   TOOLBOX_TEMPLATES='[{"slug":"android","platform":"android","name":"Android","version":1,"ref":"agtbx-android"}]'`.
 - **Per-lease adb proxy**: AndroidDriver opens a `0.0.0.0` TCP proxy →
   `127.0.0.1:(consolePort+1)` per lease; `deviceAccess.connectPort` exposes it.
 - **`build import`**: register prebuilt artifact files as a registry build (used
@@ -70,6 +70,20 @@ Container (per feature, via `dev <feature>`)
 - Broker lease boots emulator; container adb reaches it via the proxy. ✓
 - Full e2e provisioning chain (lease → forward → adb connect → db → detox prepare). ✓
 
+### Cold-boot reliability (proven 5/5 cold, 3/3 warm)
+The broker now produces a reliable device on a stone-cold boot — four real defects
+fixed (see `scripts/` + `drivers/android.ts`):
+- **GPU**: `-gpu auto` (host Metal), not `swiftshader` — RN needs a real GPU to render.
+- **Readiness**: lease gates on a *settled* device (boot flags + package-manager
+  responsive + settle), all best-effort so a probe can only help, never break leasing.
+- **Storage**: dedicated clean AVD **`agtbx-android`** (6G `<temp>` `/data`, ~5G free).
+  The borrowed `agtbx-android` had a bloated near-full `/data` (901M) → the
+  222MB dev-client install failed with "not enough space".
+- **Bundle/launch**: harness pre-warms the Metro bundle and retries `device.launchApp`
+  so a cold JS compile / cold device can't time out the run.
+- **Warm boot (speed)**: leases restore a `default_boot` snapshot in ~4s (vs ~36s);
+  `broker.sh` ensures the snapshot exists; `TOOLBOX_EMULATOR_COLD=1` forces cold.
+
 ### Gotchas found while wiring the real app
 - **Emulator GPU**: the broker booted with `-gpu swiftshader_indirect` (software).
   Fine for headless instrumented unit tests, but the real React Native / Expo app
@@ -77,7 +91,7 @@ Container (per feature, via `dev <feature>`)
   `device.launchApp()` times out ("can't connect to the test app"). Fixed: boot
   with `-gpu auto` (host Metal, offscreen) — matches `manage-emulator`. Override
   via `TOOLBOX_EMULATOR_GPU`.
-- Template must point at a real local AVD (`Medium_Phone_API_36.1`); both it and
+- Template must point at a real local AVD (`agtbx-android`); both it and
   the mandarinvocab feature AVDs are API 36.1 `google_apis_playstore`.
 - The dev-client loads JS from `10.0.2.2:<EXPO_PORT>` directly (Mac Metro), set
   via `seedReactNativeDevServerHost()`'s `debug_http_host` pref — so the broker's
