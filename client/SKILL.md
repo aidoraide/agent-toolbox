@@ -11,6 +11,11 @@ then release it. Every command prints **one JSON object** to stdout (NDJSON for
 streams); errors print `{"error":{"code","message"}}` to stderr with a nonzero
 exit.
 
+> **Building reliable e2e infra on top of this?** See the companion skill
+> [`skills/reliable-e2e/SKILL.md`](skills/reliable-e2e/SKILL.md) — repo-agnostic
+> best practices (device readiness, storage, GPU, bundle warmth, launch retry,
+> state isolation, build reuse, diagnostics) for tests that pass *every* time.
+
 ## Install
 
 The client is a self-contained bundled CLI (`toolbox`). From the `client/` package:

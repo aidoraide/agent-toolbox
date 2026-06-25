@@ -294,6 +294,13 @@ export class AndroidDriver implements DeviceDriver {
   // --- internals ----------------------------------------------------------
 
   private bootEmulator(avd: string, port: number): void {
+    // Warm boot by default: with a `default_boot` quickboot snapshot present the
+    // device restores in ~4s (vs ~30-40s cold) — `-read-only` loads it read-only,
+    // so it stays warm AND ephemeral. Cold reliability does NOT depend on this:
+    // set TOOLBOX_EMULATOR_COLD=1 to force `-no-snapshot` (and the lease is still
+    // gated on a settled device + the harness retries launches). If no snapshot
+    // exists, a warm boot simply falls back to a cold one.
+    const cold = process.env.TOOLBOX_EMULATOR_COLD === "1";
     const child = spawn(
       emulatorPath(),
       [
@@ -303,7 +310,7 @@ export class AndroidDriver implements DeviceDriver {
         "-no-window",
         "-no-audio",
         "-no-boot-anim",
-        "-no-snapshot",
+        ...(cold ? ["-no-snapshot"] : []),
         // Host GPU (Metal on macOS), offscreen. Software rendering
         // (swiftshader) is fine for headless instrumented tests but a real
         // React Native / Expo app needs a real GPU to render and init its
