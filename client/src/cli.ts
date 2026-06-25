@@ -15,14 +15,26 @@ export interface RunResult {
 
 interface ParsedArgs {
   positionals: string[];
-  flags: Record<string, string | boolean>;
+  flags: Record<string, string | boolean | string[]>;
 }
 
 const BOOLEAN_FLAGS = new Set(["force", "no-wait", "fail-if-busy"]);
+// Flags that may appear multiple times; values accumulate into an array.
+const REPEATABLE_FLAGS = new Set(["meta"]);
+
+function setFlag(flags: ParsedArgs["flags"], key: string, value: string): void {
+  if (REPEATABLE_FLAGS.has(key)) {
+    const current = flags[key];
+    if (Array.isArray(current)) current.push(value);
+    else flags[key] = [value];
+  } else {
+    flags[key] = value;
+  }
+}
 
 function parseArgs(tokens: string[]): ParsedArgs {
   const positionals: string[] = [];
-  const flags: Record<string, string | boolean> = {};
+  const flags: ParsedArgs["flags"] = {};
 
   for (let i = 0; i < tokens.length; i += 1) {
     const token = tokens[i] as string;
@@ -34,12 +46,12 @@ function parseArgs(tokens: string[]): ParsedArgs {
       const body = token.slice(2);
       const eq = body.indexOf("=");
       if (eq >= 0) {
-        flags[body.slice(0, eq)] = body.slice(eq + 1);
+        setFlag(flags, body.slice(0, eq), body.slice(eq + 1));
         continue;
       }
       const next = tokens[i + 1];
       if (!BOOLEAN_FLAGS.has(body) && next !== undefined && !next.startsWith("-")) {
-        flags[body] = next;
+        setFlag(flags, body, next);
         i += 1;
       } else {
         flags[body] = true;
@@ -265,6 +277,18 @@ async function dispatchBuild(ctx: Ctx, verb: string | undefined, rest: string[])
       if (typeof flags["cache-key"] === "string") body.cacheKey = flags["cache-key"];
       if (flags.force === true) body.force = true;
 
+      // --meta key=value (repeatable) → arbitrary build tags.
+      const metaList = Array.isArray(flags.meta) ? flags.meta : typeof flags.meta === "string" ? [flags.meta] : [];
+      if (metaList.length) {
+        const metadata: Record<string, string> = {};
+        for (const pair of metaList) {
+          const eq = pair.indexOf("=");
+          if (eq <= 0) throw new ClientFail("invalid_argument", `--meta must be key=value: ${pair}`);
+          metadata[pair.slice(0, eq)] = pair.slice(eq + 1);
+        }
+        body.metadata = metadata;
+      }
+
       const created = (await requestJson(server, "POST", "/builds", { body, timeoutMs })) as {
         buildId: string;
       };
@@ -279,6 +303,9 @@ async function dispatchBuild(ctx: Ctx, verb: string | undefined, rest: string[])
       emit(await requestJson(server, "GET", `/builds/${created.buildId}`, { timeoutMs }));
       return;
     }
+    case "list":
+      emit(await requestJson(server, "GET", "/builds", { timeoutMs }));
+      return;
     case "logs": {
       const id = requirePositional(rest, 0, "buildId");
       await streamLines(server, "GET", `/builds/${id}/logs`, timeoutMs, emit);

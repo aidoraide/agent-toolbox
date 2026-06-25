@@ -16,7 +16,9 @@ export interface TestServer {
 export async function startServer(
   overrides: Partial<ServerConfig> = {},
 ): Promise<TestServer> {
-  const config = defaultConfig({ testMode: true, ...overrides });
+  // Isolate persisted state (build registry, driver state) per server.
+  const cacheDir = overrides.cacheDir ?? fs.mkdtempSync(path.join(os.tmpdir(), "agtbx-cache-"));
+  const config = defaultConfig({ testMode: true, cacheDir, ...overrides });
   const { app } = await buildApp(config);
   await app.listen({ host: "127.0.0.1", port: 0 });
   const address = app.server.address();

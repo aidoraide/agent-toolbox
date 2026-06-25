@@ -122,4 +122,54 @@ describe("build", () => {
     const r = await build(s.server, ["--platform", "android", "--path", "/no/such/dir/xyz"]);
     expect(r.err?.code).toBe("project_not_found");
   });
+
+  test("B13 build records client metadata + a build time", async () => {
+    s = await startServer();
+    const p = tmpProject();
+    const r = await build(s.server, [
+      "--platform", "android", "--path", p,
+      "--meta", "feature=launcher", "--meta", "commit=abc123", "--meta", "branch=main",
+    ]);
+    expect(r.json?.metadata).toEqual({ feature: "launcher", commit: "abc123", branch: "main" });
+    expect(typeof r.json?.createdAt).toBe("string");
+    expect(typeof r.json?.durationMs).toBe("number");
+  });
+
+  test("B14 build list registry returns builds newest-first with metadata", async () => {
+    s = await startServer();
+    const p = tmpProject();
+    await build(s.server, ["--platform", "android", "--path", p, "--meta", "feature=a"]);
+    await build(s.server, ["--platform", "ios", "--path", p, "--meta", "feature=b"]);
+    const r = await cli(s.server, ["build", "list"]);
+    const list = (r.json as any).builds as any[];
+    expect(list.length).toBe(2);
+    expect(list[0]).toHaveProperty("buildId");
+    expect(list[0]).toHaveProperty("platform");
+    expect(list[0]).toHaveProperty("status");
+    expect(list[0]).toHaveProperty("artifacts");
+    expect(list[0]).toHaveProperty("metadata");
+    expect(list[0]).toHaveProperty("createdAt");
+  });
+
+  test("B15 registry survives a server restart (persisted to cacheDir)", async () => {
+    const cacheDir = makeCacheDir();
+    s = await startServer({ cacheDir });
+    const p = tmpProject();
+    const first = await build(s.server, ["--platform", "android", "--path", p, "--meta", "feature=persist"]);
+    const buildId = first.json?.buildId as string;
+    await s.stop();
+
+    // New server, same cacheDir → the build is still in the registry and its
+    // artifact is still downloadable.
+    s = await startServer({ cacheDir });
+    const list = await cli(s.server, ["build", "list"]);
+    expect(((list.json as any).builds as any[]).some((b) => b.buildId === buildId)).toBe(true);
+    const art = await cli(s.server, ["build", "artifact", buildId, "apk", "-o", tmpProject() + "/out.apk"]);
+    expect((art.json?.bytes as number) > 0).toBe(true);
+  });
 });
+
+import { tmpFile } from "./harness";
+function makeCacheDir(): string {
+  return tmpFile(".keep").replace(/\/[^/]+$/, "");
+}

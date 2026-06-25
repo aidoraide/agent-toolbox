@@ -47,6 +47,8 @@ const buildSchema = z.object({
   projectPath: z.string().min(1),
   cacheKey: z.string().min(1).optional(),
   force: z.boolean().optional(),
+  // Arbitrary client tags (feature, git commit, branch, ...).
+  metadata: z.record(z.string()).optional(),
 });
 const advanceClockSchema = z.object({ ms: z.number().int().nonnegative() });
 
@@ -98,7 +100,7 @@ export async function buildApp(config: ServerConfig): Promise<BuiltApp> {
   const sessions = new SessionManager(driver, config, clock);
   // Real toolchain builds (Gradle/xcodebuild) unless we're on the fake driver.
   const buildRunner = config.driver === "fake" ? new FakeBuildRunner() : new RealBuildRunner();
-  const builds = new BuildManager(buildRunner, clock);
+  const builds = new BuildManager(buildRunner, clock, config.cacheDir);
 
   const app = Fastify({ logger: false });
   await app.register(multipart, { limits: { fileSize: 1024 * 1024 * 1024 } });
@@ -221,6 +223,7 @@ export async function buildApp(config: ServerConfig): Promise<BuiltApp> {
     const body = parse(buildSchema, request.body);
     return builds.create(body);
   });
+  app.get("/builds", async () => ({ builds: builds.list() }));
   app.get("/builds/:id", async (request) => {
     const { id } = request.params as { id: string };
     return builds.summary(id);

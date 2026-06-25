@@ -102,6 +102,28 @@ toolbox build artifact "$BUILD_ID" app      -o App.zip     # ios: zipped .app (u
   shared cache.
 - `toolbox build logs <id>` re-streams a build you started elsewhere (NDJSON).
 
+### Tag builds and browse the registry
+
+Tag a build with arbitrary metadata (`--meta key=value`, repeatable) — e.g. the
+feature, git commit, branch:
+
+```bash
+toolbox build create --platform android --path /repo \
+  --meta feature=launcher --meta commit=$(git rev-parse --short HEAD) --meta branch=$(git branch --show-current)
+```
+
+The registry persists to disk (survives restarts). List everything built:
+
+```bash
+toolbox build list
+#   → { "builds": [ { "buildId","platform","cacheKey","status","cacheHit",
+#         "createdAt","durationMs","artifacts":["apk","test-apk"],
+#         "metadata":{"feature":"launcher","commit":"a1b2c3","branch":"main"} }, ... ] }
+```
+
+Newest first. Reuse a prior build by its `--cache-key` (instant `cacheHit:true`),
+or pull any listed build's artifact with `build artifact <buildId> <name> -o`.
+
 - `--cache-key` namespaces the artifact cache (e.g. per feature).
 - `--force` rebuilds and overwrites that key's cache.
 - No `--cache-key` → shared cache. Artifact names: `apk`, `test-apk` (android);
