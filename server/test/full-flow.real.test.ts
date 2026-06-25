@@ -16,7 +16,11 @@ const samples = path.resolve(here, "../../samples");
 // instrumented *unit* tests (CalculatorTest) — no Espresso input injection, so
 // it runs cleanly on bleeding-edge API levels (36) under raw `am instrument`.
 const ANDROID_SAMPLE = path.join(samples, "android/testing-samples/runner/AndroidJunitRunnerSample");
-const IOS_SAMPLE = path.join(samples, "ios/simple-swiftui/SimpleToDo");
+// SimpleScores has a real XCTest unit-test target (ViewModelTests) that runs on
+// the simulator via `xcodebuild test`.
+const IOS_SAMPLE = path.join(samples, "ios/simple-swiftui/SimpleScores");
+const IOS_SCHEME = "SimpleScores";
+const IOS_TEST_TARGET = "SimpleScoresTests";
 
 const ANDROID_AVD = process.env.AGTBX_TEST_AVD ?? "Medium_Phone_API_36.1";
 const IOS_DEVICE = process.env.AGTBX_TEST_IOS_DEVICE ?? "iPhone 16";
@@ -115,7 +119,7 @@ function tmp(name: string): string {
   }, 300_000);
 });
 
-(iosReady ? describe : describe.skip)("FULL FLOW — ios: build → lease → install → run", () => {
+(iosReady ? describe : describe.skip)("FULL FLOW — ios: build → lease → install → run → test", () => {
   let s: TestServer;
   let sid: string;
   let udid: string;
@@ -167,4 +171,22 @@ function tmp(name: string): string {
     const pid = out.split(":").pop()?.trim() ?? "";
     expect(Number(pid)).toBeGreaterThan(0);
   }, 120_000);
+
+  test("TEST — run XCTest on the leased sim, assert it passes", async () => {
+    // The agent runs its own xcodebuild test against the leased sim by UDID —
+    // the iOS parallel to `am instrument` against an adb serial.
+    const out = execFileSync(
+      "xcodebuild",
+      [
+        "test",
+        "-project", path.join(IOS_SAMPLE, "SimpleScores.xcodeproj"),
+        "-scheme", IOS_SCHEME,
+        `-only-testing:${IOS_TEST_TARGET}`,
+        "-destination", `id=${udid}`,
+        "CODE_SIGNING_ALLOWED=NO",
+      ],
+      { cwd: IOS_SAMPLE, encoding: "utf8", timeout: 300_000, maxBuffer: 64 * 1024 * 1024 },
+    );
+    expect(out).toContain("** TEST SUCCEEDED **");
+  }, 300_000);
 });

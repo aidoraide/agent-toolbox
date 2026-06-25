@@ -8,7 +8,7 @@ populate them.
 | Platform | App | Path | Toolchain (verified) |
 |---|---|---|---|
 | Android | [android/testing-samples](https://github.com/android/testing-samples) → AndroidJunitRunnerSample | `android/testing-samples/runner/AndroidJunitRunnerSample` | Gradle 8.7, AGP 8.5, JDK 17, plain AndroidJUnitRunner, on-device instrumented unit tests (run clean on API 36) |
-| iOS | [twostraws/simple-swiftui](https://github.com/twostraws/simple-swiftui) → SimpleToDo | `ios/simple-swiftui/SimpleToDo` | Xcode 26, iphonesimulator, unsigned |
+| iOS | [twostraws/simple-swiftui](https://github.com/twostraws/simple-swiftui) → SimpleScores | `ios/simple-swiftui/SimpleScores` | Xcode 26, iphonesimulator, unsigned; has an XCTest target (`SimpleScoresTests`) that runs via `xcodebuild test` |
 
 Both build cleanly from a fresh clone. The Android app uses a plain
 `AndroidJUnitRunner` with non-UI instrumented tests (`CalculatorTest`) so they
