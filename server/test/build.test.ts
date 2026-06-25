@@ -13,11 +13,11 @@ describe("build", () => {
   let s: TestServer;
   afterEach(() => s.stop());
 
-  test("B1 fresh build completes → status done, cacheHit false, has artifacts", async () => {
+  test("B1 fresh build completes → status done, has artifacts", async () => {
     s = await startServer();
     const p = tmpProject();
     const r = await build(s.server, ["--platform", "android", "--path", p]);
-    expect(r.json).toMatchObject({ status: "done", cacheHit: false });
+    expect(r.json).toMatchObject({ status: "done" });
     expect(r.json?.buildId).toBeTruthy();
     expect((r.json as any).artifacts).toContain("apk");
   });
@@ -33,38 +33,15 @@ describe("build", () => {
     expect(r.stderr).not.toContain('"type"');
   });
 
-  test("B2 cached build → done, cacheHit true", async () => {
+  test("B5 every create builds fresh (no behind-the-scenes caching)", async () => {
     s = await startServer();
     const p = tmpProject();
-    await build(s.server, ["--platform", "android", "--path", p, "--cache-key", "feat"]);
-    const second = await build(s.server, ["--platform", "android", "--path", p, "--cache-key", "feat"]);
-    expect(second.json).toMatchObject({ status: "done", cacheHit: true });
-  });
-
-  test("B3 --force rebuilds despite cache", async () => {
-    s = await startServer();
-    const p = tmpProject();
-    await build(s.server, ["--platform", "android", "--path", p, "--cache-key", "feat"]);
-    const forced = await build(s.server, [
-      "--platform", "android", "--path", p, "--cache-key", "feat", "--force",
-    ]);
-    expect(forced.json).toMatchObject({ cacheHit: false });
-  });
-
-  test("B4 different cache key → miss", async () => {
-    s = await startServer();
-    const p = tmpProject();
-    await build(s.server, ["--platform", "android", "--path", p, "--cache-key", "a"]);
-    const other = await build(s.server, ["--platform", "android", "--path", p, "--cache-key", "b"]);
-    expect(other.json).toMatchObject({ cacheHit: false });
-  });
-
-  test("B5 shared cache (no key) hits on second build", async () => {
-    s = await startServer();
-    const p = tmpProject();
-    await build(s.server, ["--platform", "android", "--path", p]);
+    const first = await build(s.server, ["--platform", "android", "--path", p]);
     const second = await build(s.server, ["--platform", "android", "--path", p]);
-    expect(second.json).toMatchObject({ cacheHit: true });
+    // Distinct builds, each compiled — two entries in the registry.
+    expect(first.json?.buildId).not.toBe(second.json?.buildId);
+    const list = await cli(s.server, ["build", "list"]);
+    expect(((list.json as any).builds as any[]).length).toBe(2);
   });
 
   test("B6 build logs replays stdout then a terminal exit event", async () => {

@@ -45,8 +45,6 @@ const inputSchema = z.discriminatedUnion("type", [
 const buildSchema = z.object({
   platform: z.string().min(1),
   projectPath: z.string().min(1),
-  cacheKey: z.string().min(1).optional(),
-  force: z.boolean().optional(),
   // Arbitrary client tags (feature, git commit, branch, ...).
   metadata: z.record(z.string()).optional(),
 });

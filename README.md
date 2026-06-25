@@ -37,7 +37,8 @@ contract:
 - **iOS** → `simctl clone` of base sims, proxies idb.
 
 The session manager handles caps, the queue, the TTL reaper, and snapshot-reset;
-the build manager handles cache-keyed builds and byte-streamed artifacts.
+the build manager compiles fresh on every request and keeps a persistent
+registry of builds (with client metadata) whose artifacts stream as bytes.
 
 ## Run the broker
 

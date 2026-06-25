@@ -81,15 +81,20 @@ The broker builds on the Mac (Gradle / xcodebuild) so a container that can't —
 especially for iOS — can delegate and pull the artifact bytes. Independent of
 sessions.
 
-`build create` runs to completion: **raw build logs stream to stderr**, and the
-**result object prints to stdout** — so you watch/keep the logs *and* capture a
-clean JSON result, no parsing tension.
+**Every `build create` compiles fresh — there is no behind-the-scenes caching.**
+To reuse a previous build, `build list` the registry and pick one yourself. It
+runs to completion: **raw build logs stream to stderr**, the **result object
+prints to stdout** — watch/keep the logs *and* capture clean JSON, no parsing
+tension.
 
 ```bash
-# logs → stderr (live), result → stdout
-RESULT=$(toolbox build create --platform android --path /repo --cache-key feat-x 2>build.log)
-#   stdout → {"buildId":"b_1","platform":"android","status":"done","cacheHit":false,
-#             "exitCode":0,"ok":true,"durationMs":21204,"artifacts":["apk","test-apk"]}
+# Tag the build with anything useful; logs → stderr (live), result → stdout
+RESULT=$(toolbox build create --platform android --path /repo \
+  --meta feature=launcher --meta commit=$(git rev-parse --short HEAD) --meta branch=$(git branch --show-current) \
+  2>build.log)
+#   stdout → {"buildId":"b_1","platform":"android","status":"done","exitCode":0,"ok":true,
+#             "durationMs":21204,"artifacts":["apk","test-apk"],
+#             "metadata":{"feature":"launcher","commit":"a1b2c3","branch":"main"}}
 BUILD_ID=$(jq -r .buildId <<<"$RESULT")
 
 toolbox build artifact "$BUILD_ID" apk      -o app.apk     # android: apk / test-apk
@@ -98,36 +103,26 @@ toolbox build artifact "$BUILD_ID" app      -o App.zip     # ios: zipped .app (u
 
 - `status` is `"done"` or `"failed"` (the build ran — `build create` exits 0; a
   *toolbox* error like bad args or unreachable server exits nonzero).
-- `--cache-key` namespaces the artifact cache; `--force` rebuilds it; no key →
-  shared cache.
+- `--meta key=value` (repeatable) tags the build; purely a label, doesn't affect
+  the build.
 - `toolbox build logs <id>` re-streams a build you started elsewhere (NDJSON).
 
-### Tag builds and browse the registry
+### Browse the registry (reuse is your call)
 
-Tag a build with arbitrary metadata (`--meta key=value`, repeatable) — e.g. the
-feature, git commit, branch:
-
-```bash
-toolbox build create --platform android --path /repo \
-  --meta feature=launcher --meta commit=$(git rev-parse --short HEAD) --meta branch=$(git branch --show-current)
-```
-
-The registry persists to disk (survives restarts). List everything built:
+The registry persists to disk (survives restarts). List everything built, newest
+first, then decide if an existing build is good enough to reuse instead of
+rebuilding:
 
 ```bash
 toolbox build list
-#   → { "builds": [ { "buildId","platform","cacheKey","status","cacheHit",
-#         "createdAt","durationMs","artifacts":["apk","test-apk"],
+#   → { "builds": [ { "buildId","platform","status","createdAt","durationMs",
+#         "artifacts":["apk","test-apk"],
 #         "metadata":{"feature":"launcher","commit":"a1b2c3","branch":"main"} }, ... ] }
 ```
 
-Newest first. Reuse a prior build by its `--cache-key` (instant `cacheHit:true`),
-or pull any listed build's artifact with `build artifact <buildId> <name> -o`.
-
-- `--cache-key` namespaces the artifact cache (e.g. per feature).
-- `--force` rebuilds and overwrites that key's cache.
-- No `--cache-key` → shared cache. Artifact names: `apk`, `test-apk` (android);
-  `app`, `ipa` (ios).
+Pick a build (e.g. by matching `metadata.commit`) and pull its artifact with
+`build artifact <buildId> <name> -o`. Artifact names: `apk`, `test-apk`
+(android); `app`, `ipa` (ios).
 
 ## Capacity & queueing
 

@@ -274,8 +274,6 @@ async function dispatchBuild(ctx: Ctx, verb: string | undefined, rest: string[])
         platform: requireFlag(flags, "platform"),
         projectPath: requireFlag(flags, "path"),
       };
-      if (typeof flags["cache-key"] === "string") body.cacheKey = flags["cache-key"];
-      if (flags.force === true) body.force = true;
 
       // --meta key=value (repeatable) → arbitrary build tags.
       const metaList = Array.isArray(flags.meta) ? flags.meta : typeof flags.meta === "string" ? [flags.meta] : [];

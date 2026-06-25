@@ -54,14 +54,13 @@ export class FakeBuildRunner implements BuildRunner {
   }
 }
 
-// The persisted registry record for a build. Artifact bytes live alongside it on
-// disk (cacheDir/builds/<buildId>/<name>); this holds everything else.
+// A registry record for a build. There is no behind-the-scenes caching: every
+// `create` compiles fresh. Callers `list()` the registry and decide for
+// themselves whether an existing build's artifacts are good to reuse.
 export interface BuildRecord {
   buildId: string;
   platform: Platform;
-  cacheKey: string | null;
   status: "running" | "done" | "failed";
-  cacheHit: boolean;
   exitCode: number | null;
   ok: boolean | null;
   durationMs: number | null;
@@ -82,16 +81,12 @@ interface LiveBuild {
 export interface CreateBuildInput {
   platform: string;
   projectPath: string;
-  cacheKey?: string;
-  force?: boolean;
   metadata?: Record<string, string>;
 }
 
 export class BuildManager {
   private readonly records = new Map<string, BuildRecord>();
   private readonly live = new Map<string, LiveBuild>();
-  // cacheId (platform:key) → buildId of the most recent successful build.
-  private readonly cacheIndex = new Map<string, string>();
   private readonly buildsDir: string;
   private counter = 0;
 
@@ -104,11 +99,9 @@ export class BuildManager {
     this.loadFromDisk();
   }
 
-  create(input: CreateBuildInput): {
-    buildId: string;
-    status: BuildRecord["status"];
-    cacheHit: boolean;
-  } {
+  // Always compiles fresh. Returns immediately; the build runs async and streams
+  // logs via /builds/:id/logs.
+  create(input: CreateBuildInput): { buildId: string; status: BuildRecord["status"] } {
     if (input.platform !== "android" && input.platform !== "ios") {
       throw new AppError("invalid_argument", `Invalid platform: ${input.platform}`);
     }
@@ -117,44 +110,18 @@ export class BuildManager {
       throw new AppError("project_not_found", `Project path does not exist: ${input.projectPath}`);
     }
 
-    const cacheKey = input.cacheKey ?? null;
-    const cacheId = `${platform}:${cacheKey ?? "__shared__"}`;
     this.counter += 1;
     const id = `b_${this.counter}`;
-    const createdAt = this.clock.toIso(this.clock.now());
-    const metadata = input.metadata ?? {};
-
-    // Cache hit: reuse a prior successful build's artifacts (copied into this
-    // build's dir so each registry entry is self-contained) without rebuilding.
-    const cachedId = this.cacheIndex.get(cacheId);
-    if (!input.force && cachedId && this.artifactsExist(cachedId)) {
-      const source = this.records.get(cachedId) as BuildRecord;
-      const dir = this.buildDir(id);
-      fs.mkdirSync(dir, { recursive: true });
-      for (const name of source.artifacts) {
-        fs.copyFileSync(path.join(this.buildDir(cachedId), name), path.join(dir, name));
-      }
-      const record: BuildRecord = {
-        buildId: id, platform, cacheKey, status: "done", cacheHit: true,
-        exitCode: 0, ok: true, durationMs: 0, createdAt, metadata,
-        artifacts: [...source.artifacts],
-      };
-      this.persist(record);
-      this.records.set(id, record);
-      this.cacheIndex.set(cacheId, id);
-      this.live.set(id, {
-        record,
-        buffer: [{ type: "stdout", data: "Cache hit — skipping build\n" }],
-        exit: { type: "exit", exitCode: 0, ok: true, durationMs: 0 },
-        listeners: new Set(),
-        completion: Promise.resolve(),
-      });
-      return { buildId: id, status: "done", cacheHit: true };
-    }
-
     const record: BuildRecord = {
-      buildId: id, platform, cacheKey, status: "running", cacheHit: false,
-      exitCode: null, ok: null, durationMs: null, createdAt, metadata, artifacts: [],
+      buildId: id,
+      platform,
+      status: "running",
+      exitCode: null,
+      ok: null,
+      durationMs: null,
+      createdAt: this.clock.toIso(this.clock.now()),
+      metadata: input.metadata ?? {},
+      artifacts: [],
     };
     this.records.set(id, record);
     const build: LiveBuild = {
@@ -165,14 +132,14 @@ export class BuildManager {
       completion: Promise.resolve(),
     };
     this.live.set(id, build);
-    build.completion = this.run(build, platform, input.projectPath, cacheId);
-    return { buildId: id, status: "running", cacheHit: false };
+    build.completion = this.run(build, platform, input.projectPath);
+    return { buildId: id, status: "running" };
   }
 
   async *logs(id: string, signal: AbortSignal): AsyncIterable<BuildStreamEvent> {
     const build = this.live.get(id);
     if (!build) {
-      // Completed build with logs no longer in memory (e.g. after restart).
+      // Completed build whose logs are no longer in memory (e.g. after restart).
       if (this.records.has(id)) return;
       throw new AppError("build_not_found", `Unknown build: ${id}`);
     }
@@ -221,7 +188,7 @@ export class BuildManager {
 
   // --- internals ----------------------------------------------------------
 
-  private async run(build: LiveBuild, platform: Platform, projectPath: string, cacheId: string): Promise<void> {
+  private async run(build: LiveBuild, platform: Platform, projectPath: string): Promise<void> {
     const startedAt = this.clock.now();
     const emit = (event: BuildLogEvent) => {
       build.buffer.push(event);
@@ -252,7 +219,6 @@ export class BuildManager {
         fs.writeFileSync(path.join(dir, name), bytes);
       }
       build.record.artifacts = [...artifacts.keys()];
-      this.cacheIndex.set(cacheId, build.record.buildId);
     }
     this.persist(build.record);
 
@@ -265,12 +231,6 @@ export class BuildManager {
     return path.join(this.buildsDir, id);
   }
 
-  private artifactsExist(id: string): boolean {
-    const record = this.records.get(id);
-    if (!record || record.status !== "done") return false;
-    return record.artifacts.every((name) => fs.existsSync(path.join(this.buildDir(id), name)));
-  }
-
   private persist(record: BuildRecord): void {
     const dir = this.buildDir(record.buildId);
     fs.mkdirSync(dir, { recursive: true });
@@ -279,23 +239,15 @@ export class BuildManager {
 
   private loadFromDisk(): void {
     if (!fs.existsSync(this.buildsDir)) return;
-    const entries = fs.readdirSync(this.buildsDir, { withFileTypes: true });
-    for (const entry of entries) {
+    for (const entry of fs.readdirSync(this.buildsDir, { withFileTypes: true })) {
       if (!entry.isDirectory()) continue;
-      const recordPath = path.join(this.buildsDir, entry.name, "record.json");
       try {
-        const record = JSON.parse(fs.readFileSync(recordPath, "utf8")) as BuildRecord;
+        const record = JSON.parse(
+          fs.readFileSync(path.join(this.buildsDir, entry.name, "record.json"), "utf8"),
+        ) as BuildRecord;
         this.records.set(record.buildId, record);
         const n = Number(record.buildId.replace(/^b_/, ""));
         if (Number.isFinite(n)) this.counter = Math.max(this.counter, n);
-        if (record.status === "done") {
-          const cacheId = `${record.platform}:${record.cacheKey ?? "__shared__"}`;
-          const existing = this.cacheIndex.get(cacheId);
-          const existingRec = existing ? this.records.get(existing) : undefined;
-          if (!existingRec || record.createdAt > existingRec.createdAt) {
-            this.cacheIndex.set(cacheId, record.buildId);
-          }
-        }
       } catch {
         // skip unreadable record
       }
