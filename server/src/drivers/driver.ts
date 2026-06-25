@@ -56,7 +56,11 @@ export type InputSpec =
 // Platform-appropriate native handle so an agent's own toolchain can drive the
 // device directly.
 export type DeviceAccess =
-  | { kind: "adb"; host: string; port: number; serial: string }
+  // Android. `host`/`port`/`serial` address the broker's adb server (local use).
+  // `connectPort` is a host-reachable (0.0.0.0) proxy to the emulator's adb
+  // daemon: a remote/container client does `adb connect <brokerHost>:<connectPort>`
+  // from its own adb server.
+  | { kind: "adb"; host: string; port: number; serial: string; connectPort: number }
   | { kind: "simctl"; udid: string };
 
 // A pre-existing instance discovered on the host during reconciliation.

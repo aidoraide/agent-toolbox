@@ -74,5 +74,10 @@ export function loadConfig(): ServerConfig {
       ios: Number(process.env.TOOLBOX_MAX_IOS ?? 2),
     };
   }
+  // TOOLBOX_TEMPLATES = JSON array of TemplateConfig, to point templates at the
+  // real AVDs/sims on this machine without code changes.
+  if (process.env.TOOLBOX_TEMPLATES) {
+    overrides.templates = JSON.parse(process.env.TOOLBOX_TEMPLATES) as TemplateConfig[];
+  }
   return defaultConfig(overrides);
 }

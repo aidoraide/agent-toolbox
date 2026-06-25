@@ -20,7 +20,7 @@ interface ParsedArgs {
 
 const BOOLEAN_FLAGS = new Set(["force", "no-wait", "fail-if-busy"]);
 // Flags that may appear multiple times; values accumulate into an array.
-const REPEATABLE_FLAGS = new Set(["meta"]);
+const REPEATABLE_FLAGS = new Set(["meta", "artifact"]);
 
 function setFlag(flags: ParsedArgs["flags"], key: string, value: string): void {
   if (REPEATABLE_FLAGS.has(key)) {
@@ -304,6 +304,37 @@ async function dispatchBuild(ctx: Ctx, verb: string | undefined, rest: string[])
     case "list":
       emit(await requestJson(server, "GET", "/builds", { timeoutMs }));
       return;
+    case "import": {
+      // Register existing artifact files (paths on the broker host) as a build.
+      // --artifact name=path (repeatable), --meta key=value (repeatable).
+      const artifactList = Array.isArray(flags.artifact)
+        ? flags.artifact
+        : typeof flags.artifact === "string"
+          ? [flags.artifact]
+          : [];
+      if (artifactList.length === 0) {
+        throw new ClientFail("invalid_argument", "build import needs at least one --artifact name=path");
+      }
+      const artifacts: Record<string, string> = {};
+      for (const pair of artifactList) {
+        const eq = pair.indexOf("=");
+        if (eq <= 0) throw new ClientFail("invalid_argument", `--artifact must be name=path: ${pair}`);
+        artifacts[pair.slice(0, eq)] = pair.slice(eq + 1);
+      }
+      const body: Record<string, unknown> = { platform: requireFlag(flags, "platform"), artifacts };
+      const metaList = Array.isArray(flags.meta) ? flags.meta : typeof flags.meta === "string" ? [flags.meta] : [];
+      if (metaList.length) {
+        const metadata: Record<string, string> = {};
+        for (const pair of metaList) {
+          const eq = pair.indexOf("=");
+          if (eq <= 0) throw new ClientFail("invalid_argument", `--meta must be key=value: ${pair}`);
+          metadata[pair.slice(0, eq)] = pair.slice(eq + 1);
+        }
+        body.metadata = metadata;
+      }
+      emit(await requestJson(server, "POST", "/builds/import", { body, timeoutMs }));
+      return;
+    }
     case "logs": {
       const id = requirePositional(rest, 0, "buildId");
       await streamLines(server, "GET", `/builds/${id}/logs`, timeoutMs, emit);

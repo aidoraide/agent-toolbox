@@ -18,6 +18,7 @@ import {
   type TemplateConfig,
 } from "./driver";
 import { aapt2Path, adb, adbPath, emulatorPath, listAvds, run, runBinary } from "./sdk";
+import { openProxy, type Proxy } from "../util/tunnel";
 
 interface AndroidInstance {
   instanceId: string;
@@ -26,6 +27,9 @@ interface AndroidInstance {
   serial: string;
   avd: string;
   templateSlug: string;
+  // 0.0.0.0 TCP proxy to this emulator's adb daemon, for container/remote
+  // `adb connect`.
+  adbProxy: Proxy | null;
 }
 
 interface PersistedInstance {
@@ -95,12 +99,17 @@ export class AndroidDriver implements DeviceDriver {
     this.pendingPorts.set(port, { ref, avd: template.ref });
     this.persist();
 
+    let adbProxy: Proxy | null = null;
     try {
       this.bootEmulator(template.ref, port);
       await this.waitForBoot(serial);
       await this.disableAnimations(serial);
+      // Expose the emulator's adb daemon (console port + 1) on a host-reachable
+      // 0.0.0.0 port so a container can `adb connect host.docker.internal:<port>`.
+      adbProxy = await openProxy({ host: "127.0.0.1", port: port + 1 });
     } catch (err) {
       // Free the reservation and kill any half-booted emulator.
+      adbProxy?.close();
       await adb(serial, ["emu", "kill"]).catch(() => undefined);
       this.reservedPorts.delete(port);
       this.pendingPorts.delete(port);
@@ -115,6 +124,7 @@ export class AndroidDriver implements DeviceDriver {
       serial,
       avd: template.ref,
       templateSlug: template.slug,
+      adbProxy,
     };
     this.pendingPorts.delete(port);
     this.instances.set(instanceId, instance);
@@ -146,6 +156,7 @@ export class AndroidDriver implements DeviceDriver {
   async destroy(handle: DeviceHandle): Promise<void> {
     const instance = this.instances.get(handle.instanceId);
     if (!instance) return; // idempotent
+    instance.adbProxy?.close();
     await adb(instance.serial, ["emu", "kill"]);
     await this.waitForGone(instance.serial);
     this.instances.delete(handle.instanceId);
@@ -267,7 +278,13 @@ export class AndroidDriver implements DeviceDriver {
     // The broker's adb server (default 5037) already owns this emulator. Agents
     // point ADB_SERVER_SOCKET here and use `adb -s <serial>`.
     const port = Number(process.env.ANDROID_ADB_SERVER_PORT ?? 5037);
-    return { kind: "adb", host: "127.0.0.1", port, serial: instance.serial };
+    return {
+      kind: "adb",
+      host: "127.0.0.1",
+      port,
+      serial: instance.serial,
+      connectPort: instance.adbProxy?.port ?? 0,
+    };
   }
 
   instanceCount(): number {

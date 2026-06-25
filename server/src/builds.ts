@@ -136,6 +136,47 @@ export class BuildManager {
     return { buildId: id, status: "running" };
   }
 
+  // Register already-built artifact files (paths on the broker host) as a build
+  // in the registry — no compilation. Used to seed a prebuilt APK so consumers
+  // can pull it via the normal artifact endpoint.
+  import(input: {
+    platform: string;
+    artifacts: Record<string, string>;
+    metadata?: Record<string, string>;
+  }): BuildRecord {
+    if (input.platform !== "android" && input.platform !== "ios") {
+      throw new AppError("invalid_argument", `Invalid platform: ${input.platform}`);
+    }
+    const names = Object.keys(input.artifacts);
+    if (names.length === 0) {
+      throw new AppError("invalid_argument", "No artifacts provided");
+    }
+    this.counter += 1;
+    const id = `b_${this.counter}`;
+    const dir = this.buildDir(id);
+    fs.mkdirSync(dir, { recursive: true });
+    for (const [name, srcPath] of Object.entries(input.artifacts)) {
+      if (!fs.existsSync(srcPath)) {
+        throw new AppError("project_not_found", `Artifact file not found: ${srcPath}`);
+      }
+      fs.copyFileSync(srcPath, path.join(dir, name));
+    }
+    const record: BuildRecord = {
+      buildId: id,
+      platform: input.platform,
+      status: "done",
+      exitCode: 0,
+      ok: true,
+      durationMs: 0,
+      createdAt: this.clock.toIso(this.clock.now()),
+      metadata: input.metadata ?? {},
+      artifacts: names,
+    };
+    this.persist(record);
+    this.records.set(id, record);
+    return record;
+  }
+
   async *logs(id: string, signal: AbortSignal): AsyncIterable<BuildStreamEvent> {
     const build = this.live.get(id);
     if (!build) {

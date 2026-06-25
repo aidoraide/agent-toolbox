@@ -48,6 +48,12 @@ const buildSchema = z.object({
   // Arbitrary client tags (feature, git commit, branch, ...).
   metadata: z.record(z.string()).optional(),
 });
+
+const importBuildSchema = z.object({
+  platform: z.string().min(1),
+  artifacts: z.record(z.string().min(1)),
+  metadata: z.record(z.string()).optional(),
+});
 const advanceClockSchema = z.object({ ms: z.number().int().nonnegative() });
 
 function parse<T>(schema: z.ZodType<T>, body: unknown): T {
@@ -220,6 +226,10 @@ export async function buildApp(config: ServerConfig): Promise<BuiltApp> {
   app.post("/builds", async (request) => {
     const body = parse(buildSchema, request.body);
     return builds.create(body);
+  });
+  app.post("/builds/import", async (request) => {
+    const body = parse(importBuildSchema, request.body);
+    return builds.import(body);
   });
   app.get("/builds", async () => ({ builds: builds.list() }));
   app.get("/builds/:id", async (request) => {
