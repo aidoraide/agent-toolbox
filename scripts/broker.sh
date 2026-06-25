@@ -10,7 +10,7 @@ CLIENT_BIN="$ROOT/client/dist/index.cjs"
 PORT="${TOOLBOX_PORT:-4500}"
 APKS="${MANDARINVOCAB_APK_CACHE:-$HOME/.cache/mandarinvocab/apks}"
 
-DEFAULT_TEMPLATES='[{"slug":"android","platform":"android","name":"Android","version":1,"ref":"Medium_Phone_API_36.1"}]'
+DEFAULT_TEMPLATES='[{"slug":"android","platform":"android","name":"Android","version":1,"ref":"agtbx-android"}]'
 
 export TOOLBOX_DRIVER=android
 export TOOLBOX_HOST=0.0.0.0

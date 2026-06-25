@@ -310,6 +310,13 @@ export class AndroidDriver implements DeviceDriver {
         // bridge, or it never becomes "ready" for the test runner. Override
         // with TOOLBOX_EMULATOR_GPU if needed.
         "-gpu", process.env.TOOLBOX_EMULATOR_GPU ?? "auto",
+        // Give /data enough room for a real app. AVDs without an explicit
+        // disk.dataPartition.size fall back to a small default that can't hold a
+        // large APK plus its dex/ART extraction — the install fails with "not
+        // enough space" (and a near-full /data also makes launches crash). Match
+        // what production-grade AVDs set (6G). Override with
+        // TOOLBOX_EMULATOR_PARTITION_MB.
+        "-partition-size", process.env.TOOLBOX_EMULATOR_PARTITION_MB ?? "6144",
         // Unique marker in the process args so cleanup can identify OUR
         // emulators precisely — never the user's own.
         "-prop", "agtbx.managed=1",
@@ -330,12 +337,75 @@ export class AndroidDriver implements DeviceDriver {
   private async waitForBoot(serial: string): Promise<void> {
     const deadline = Date.now() + BOOT_TIMEOUT_MS;
     await adb(serial, ["wait-for-device"], BOOT_TIMEOUT_MS);
+
+    // HARD requirement: framework boot complete. This is the only condition that
+    // may fail the lease (same as before) — a device that never reaches it is
+    // genuinely broken.
+    await this.waitForProp(serial, "sys.boot_completed", "1", deadline);
+
+    // BEST-EFFORT settle: `sys.boot_completed` fires while services are still
+    // coming up and (on a cold boot) system apps are still crashing/restarting,
+    // which makes the first app install+launch flaky. Wait for a couple of
+    // "system has settled" signals to converge — but NEVER fail the lease if a
+    // probe doesn't, so a readiness check can only HELP, never break leasing.
+    // The test harness retries launches as the real backstop.
+    await this.settleAfterBoot(serial);
+  }
+
+  private async waitForProp(
+    serial: string,
+    prop: string,
+    expected: string,
+    deadline: number,
+  ): Promise<void> {
     while (Date.now() < deadline) {
-      const result = await adb(serial, ["shell", "getprop", "sys.boot_completed"], 10_000);
-      if (result.stdout.trim() === "1") return;
+      const result = await adb(serial, ["shell", "getprop", prop], 10_000).catch(
+        () => null,
+      );
+      if (result && result.stdout.trim() === expected) return;
       await sleep(2000);
     }
-    throw new AppError("install_failed", `Emulator ${serial} did not finish booting in time`);
+    throw new AppError(
+      "install_failed",
+      `Emulator ${serial} did not reach ${prop}=${expected} in time`,
+    );
+  }
+
+  private async settleAfterBoot(serial: string): Promise<void> {
+    const softDeadline = Date.now() + 90_000;
+
+    // dev.bootcomplete is set slightly after sys.boot_completed.
+    await this.pollBestEffort(softDeadline, async () => {
+      const r = await adb(serial, ["shell", "getprop", "dev.bootcomplete"], 10_000).catch(
+        () => null,
+      );
+      return r != null && r.stdout.trim() === "1";
+    });
+
+    // Package manager can resolve the framework package — a cheap proxy for "pm
+    // finished its own startup and can service an install + immediate launch".
+    await this.pollBestEffort(softDeadline, async () => {
+      const r = await adb(serial, ["shell", "pm", "path", "android"], 10_000).catch(
+        () => null,
+      );
+      return r != null && r.stdout.includes("package:");
+    });
+
+    // Brief final settle for late-starting services (Play Services, etc.).
+    await sleep(3000);
+  }
+
+  // Poll `probe` until it returns true or the soft deadline passes; returns
+  // either way. For readiness signals that should improve reliability without
+  // ever being able to fail the lease.
+  private async pollBestEffort(
+    deadline: number,
+    probe: () => Promise<boolean>,
+  ): Promise<void> {
+    while (Date.now() < deadline) {
+      if (await probe().catch(() => false)) return;
+      await sleep(2000);
+    }
   }
 
   private async waitForGone(serial: string): Promise<void> {
