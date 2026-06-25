@@ -98,6 +98,7 @@ export class AndroidDriver implements DeviceDriver {
     try {
       this.bootEmulator(template.ref, port);
       await this.waitForBoot(serial);
+      await this.disableAnimations(serial);
     } catch (err) {
       // Free the reservation and kill any half-booted emulator.
       await adb(serial, ["emu", "kill"]).catch(() => undefined);
@@ -294,6 +295,14 @@ export class AndroidDriver implements DeviceDriver {
       { detached: true, stdio: "ignore" },
     );
     child.unref();
+  }
+
+  // UI test frameworks (Espresso/UiAutomator) require animations off, or they
+  // flake/fail. Safe default for a device-testing broker.
+  private async disableAnimations(serial: string): Promise<void> {
+    for (const key of ["window_animation_scale", "transition_animation_scale", "animator_duration_scale"]) {
+      await adb(serial, ["shell", "settings", "put", "global", key, "0"]).catch(() => undefined);
+    }
   }
 
   private async waitForBoot(serial: string): Promise<void> {

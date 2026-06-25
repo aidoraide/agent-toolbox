@@ -13,7 +13,9 @@ clone() {
   fi
 }
 
-clone https://github.com/android/architecture-samples android/architecture-samples
-clone https://github.com/twostraws/simple-swiftui      ios/simple-swiftui
+clone https://github.com/android/testing-samples  android/testing-samples
+clone https://github.com/twostraws/simple-swiftui ios/simple-swiftui
 
-echo "done. Android: android/architecture-samples  iOS: ios/simple-swiftui/SimpleToDo"
+echo "done."
+echo "  Android build+test: android/testing-samples/runner/AndroidJunitRunnerSample"
+echo "  iOS build+run:      ios/simple-swiftui/SimpleToDo"

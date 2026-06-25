@@ -56,13 +56,17 @@ export class GradleBuildRunner {
       throw new AppError("project_not_found", `No gradlew wrapper in ${projectPath}`);
     }
     const env = { ...process.env, ANDROID_HOME: sdkRoot() };
-    emit({ type: "stdout", data: `Running ./gradlew assembleDebug in ${projectPath}\n` });
-    const exitCode = await spawnStream(gradlew, ["assembleDebug", "--no-daemon"], projectPath, env, emit);
+    // Build the app APK and the instrumentation (androidTest) APK so the full
+    // install → instrument flow works from one build.
+    const tasks = ["assembleDebug", "assembleDebugAndroidTest"];
+    emit({ type: "stdout", data: `Running ./gradlew ${tasks.join(" ")} in ${projectPath}\n` });
+    const exitCode = await spawnStream(gradlew, [...tasks, "--no-daemon"], projectPath, env, emit);
 
     const artifacts = new Map<string, Buffer>();
     if (exitCode === 0) {
-      // Collect the app debug APK (exclude the androidTest instrumentation apk).
-      const apks = walk(projectPath, (f) => /\/build\/outputs\/apk\/debug\/.*\.apk$/.test(f));
+      // Both the app APK (.../apk/debug/) and the instrumentation APK
+      // (.../apk/androidTest/debug/) live under build/outputs/apk.
+      const apks = walk(projectPath, (f) => /\/build\/outputs\/apk\/.*\.apk$/.test(f));
       const appApk = apks.find((f) => !/androidTest/i.test(f)) ?? apks[0];
       if (appApk) artifacts.set("apk", fs.readFileSync(appApk));
       const testApk = apks.find((f) => /androidTest/i.test(f));

@@ -7,10 +7,12 @@ populate them.
 
 | Platform | App | Path | Toolchain (verified) |
 |---|---|---|---|
-| Android | [android/architecture-samples](https://github.com/android/architecture-samples) | `android/architecture-samples` | Gradle 8.11.1, AGP 8.7.3, JDK 17, compileSdk 35 (auto-downloaded) |
+| Android | [android/testing-samples](https://github.com/android/testing-samples) → AndroidJunitRunnerSample | `android/testing-samples/runner/AndroidJunitRunnerSample` | Gradle 8.7, AGP 8.5, JDK 17, plain AndroidJUnitRunner, on-device instrumented unit tests (run clean on API 36) |
 | iOS | [twostraws/simple-swiftui](https://github.com/twostraws/simple-swiftui) → SimpleToDo | `ios/simple-swiftui/SimpleToDo` | Xcode 26, iphonesimulator, unsigned |
 
-Both build cleanly from a fresh clone with the installed toolchain.
+Both build cleanly from a fresh clone. The Android app uses a plain
+`AndroidJUnitRunner` with non-UI instrumented tests (`CalculatorTest`) so they
+run under raw `am instrument` without Hilt or Espresso-input incompatibilities.
 
 ## Fetch
 

@@ -14,6 +14,7 @@
     "test:real:android": "RUN_REAL_ANDROID=1 vitest run --config vitest.real.config.ts",
     "test:real:android:concurrency": "RUN_REAL_ANDROID=1 RUN_REAL_ANDROID_CONCURRENCY=1 vitest run --config vitest.real.config.ts -t agents",
     "test:real:ios": "RUN_REAL_IOS=1 vitest run --config vitest.real.config.ts",
+    "test:real:flow": "RUN_REAL_ANDROID=1 RUN_REAL_IOS=1 vitest run --config vitest.real.config.ts -t 'FULL FLOW'",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
