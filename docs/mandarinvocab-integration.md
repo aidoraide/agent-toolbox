@@ -84,6 +84,38 @@ Container (per feature, via `dev <feature>`)
   via `seedReactNativeDevServerHost()`'s `debug_http_host` pref — so the broker's
   8081 `device forward` is belt-and-suspenders, not the primary path.
 
+## Phase 4 — every `dev <feature>` works out of the box
+
+Once two things are true, **every** `dev <feature>` env gets working broker e2e
+with zero per-feature setup (the rewritten `run-android-test.ts` defaults
+`TOOLBOX_SERVER` to `host.docker.internal:4500` and uses the vendored client):
+
+1. **Broker always running + main build seeded** — DONE (in this repo):
+   - `scripts/broker.sh` starts the broker (0.0.0.0:4500, android, max 3) and
+     seeds the cached main APK into the registry once (idempotent; registry
+     persists to disk).
+   - `scripts/com.agenttoolbox.broker.plist` — launchd agent to keep it alive at
+     login. Install:
+     ```
+     cp scripts/com.agenttoolbox.broker.plist ~/Library/LaunchAgents/
+     launchctl load ~/Library/LaunchAgents/com.agenttoolbox.broker.plist
+     ```
+
+2. **The e2e changes live in `main`** — NEEDS YOU (I'm scoped to the worktree +
+   this repo, can't touch `~/code/mandarinvocab`):
+   - Merge the `testing-sandbox` branch's two files to main:
+     `nextapp/src/scripts/detox/run-android-test.ts` (broker flow) and
+     `nextapp/tools/toolbox.cjs` (vendored client).
+   - After that, every `dev <feature>` worktree branches from main → inherits
+     them → e2e runs on the broker, reusing the cached main build (the Expo
+     dev-client just loads each feature's JS bundle from its own Metro).
+   - Nothing else per-feature: no compose/env/port changes (the broker URL is a
+     fixed default; `host.docker.internal` + `EXPO_PORT` already exist per env).
+
+   Optional polish for main (your call): keep `toolbox.cjs` fresh by building the
+   client (`agent-toolbox/client && npm run build`) and copying `dist/index.cjs`
+   into `nextapp/tools/toolbox.cjs` when the client changes.
+
 ## Unchanged / coexisting
 - mac-bridge (per-feature 132xx) — still present; broker path no longer calls it.
 - The broker's `connectPort` proxy replaces `manage-emulator`'s `+10001` proxy.

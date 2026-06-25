@@ -1,0 +1,37 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  Keep the agent-toolbox broker running at login so every `dev <feature>` env has
+  it available. Install:
+    cp scripts/com.agenttoolbox.broker.plist ~/Library/LaunchAgents/
+    launchctl load ~/Library/LaunchAgents/com.agenttoolbox.broker.plist
+  Logs: /tmp/agtbx-broker.log   Stop: launchctl unload ~/Library/LaunchAgents/com.agenttoolbox.broker.plist
+-->
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>com.agenttoolbox.broker</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>/bin/bash</string>
+    <string>/Users/aidanrosswood/code/agent-toolbox/scripts/broker.sh</string>
+  </array>
+  <key>RunAtLoad</key>
+  <true/>
+  <key>KeepAlive</key>
+  <true/>
+  <key>StandardOutPath</key>
+  <string>/tmp/agtbx-broker.log</string>
+  <key>StandardErrorPath</key>
+  <string>/tmp/agtbx-broker.log</string>
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>HOME</key>
+    <string>/Users/aidanrosswood</string>
+    <key>ANDROID_HOME</key>
+    <string>/Users/aidanrosswood/Library/Android/sdk</string>
+    <key>PATH</key>
+    <string>/Users/aidanrosswood/.nvm/versions/node/v24.0.0/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
+  </dict>
+</dict>
+</plist>
