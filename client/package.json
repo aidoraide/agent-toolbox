@@ -4,10 +4,17 @@
   "private": true,
   "type": "module",
   "bin": {
-    "toolbox": "./src/index.ts"
+    "toolbox": "dist/index.cjs"
   },
+  "files": [
+    "dist",
+    "SKILL.md"
+  ],
   "scripts": {
+    "build": "esbuild src/index.ts --bundle --platform=node --target=node18 --format=cjs --outfile=dist/index.cjs --banner:js=\"#!/usr/bin/env node\"",
     "start": "tsx src/index.ts",
+    "prepare": "npm run build",
+    "prepack": "npm run build",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
@@ -15,6 +22,7 @@
   },
   "devDependencies": {
     "@types/node": "^22.5.0",
+    "esbuild": "^0.24.0",
     "tsx": "^4.19.0",
     "typescript": "^5.5.4"
   }

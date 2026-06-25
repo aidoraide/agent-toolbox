@@ -1,4 +1,3 @@
-#!/usr/bin/env -S npx tsx
 import { run } from "./cli";
 
 async function main(): Promise<void> {

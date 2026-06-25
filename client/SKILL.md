@@ -11,6 +11,17 @@ then release it. Every command prints **one JSON object** to stdout (NDJSON for
 streams); errors print `{"error":{"code","message"}}` to stderr with a nonzero
 exit.
 
+## Install
+
+The client is a self-contained bundled CLI (`toolbox`). From the `client/` package:
+
+```bash
+npm install && npm run build   # produces dist/index.cjs (node, no tsx needed)
+npm link                       # puts `toolbox` on PATH
+# or install into a project:  npm install /path/to/agent-toolbox/client
+# or run the bundle directly:  node dist/index.cjs <command>
+```
+
 ## Setup
 
 Point the client at the broker (default `http://localhost:4500`):
@@ -18,8 +29,6 @@ Point the client at the broker (default `http://localhost:4500`):
 - `--server <url>` flag (highest precedence), or
 - `TOOLBOX_SERVER` env var, or
 - `~/.config/agent-toolbox/config.json` → `{"server":"..."}`
-
-Run: `npx tsx <client>/src/index.ts <command>` (or the `toolbox` bin once linked).
 
 ## Core loop
 
