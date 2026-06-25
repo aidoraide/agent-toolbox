@@ -71,6 +71,19 @@ Container (per feature, via `dev <feature>`)
 - Broker lease boots emulator; container adb reaches it via the proxy. ✓
 - Full e2e provisioning chain (lease → forward → adb connect → db → detox prepare). ✓
 
+### Gotchas found while wiring the real app
+- **Emulator GPU**: the broker booted with `-gpu swiftshader_indirect` (software).
+  Fine for headless instrumented unit tests, but the real React Native / Expo app
+  never renders / its bridge never becomes "ready" under software GPU → detox
+  `device.launchApp()` times out ("can't connect to the test app"). Fixed: boot
+  with `-gpu auto` (host Metal, offscreen) — matches `manage-emulator`. Override
+  via `TOOLBOX_EMULATOR_GPU`.
+- Template must point at a real local AVD (`Medium_Phone_API_36.1`); both it and
+  the mandarinvocab feature AVDs are API 36.1 `google_apis_playstore`.
+- The dev-client loads JS from `10.0.2.2:<EXPO_PORT>` directly (Mac Metro), set
+  via `seedReactNativeDevServerHost()`'s `debug_http_host` pref — so the broker's
+  8081 `device forward` is belt-and-suspenders, not the primary path.
+
 ## Unchanged / coexisting
 - mac-bridge (per-feature 132xx) — still present; broker path no longer calls it.
 - The broker's `connectPort` proxy replaces `manage-emulator`'s `+10001` proxy.

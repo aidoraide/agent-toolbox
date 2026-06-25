@@ -304,7 +304,12 @@ export class AndroidDriver implements DeviceDriver {
         "-no-audio",
         "-no-boot-anim",
         "-no-snapshot",
-        "-gpu", "swiftshader_indirect",
+        // Host GPU (Metal on macOS), offscreen. Software rendering
+        // (swiftshader) is fine for headless instrumented tests but a real
+        // React Native / Expo app needs a real GPU to render and init its
+        // bridge, or it never becomes "ready" for the test runner. Override
+        // with TOOLBOX_EMULATOR_GPU if needed.
+        "-gpu", process.env.TOOLBOX_EMULATOR_GPU ?? "auto",
         // Unique marker in the process args so cleanup can identify OUR
         // emulators precisely — never the user's own.
         "-prop", "agtbx.managed=1",
