@@ -37,19 +37,42 @@ Container (per feature, via `dev <feature>`)
 
 ## Changelog (ports / connections / env)
 
-### Added
-- **Broker server**: `0.0.0.0:4500` on the Mac (fixed, shared). Reached from
-  containers at `host.docker.internal:4500`.
+### Added (agent-toolbox repo)
+- **Broker server**: `0.0.0.0:4500` on the Mac (fixed, shared). Containers reach
+  it at `host.docker.internal:4500`. Started with
+  `TOOLBOX_DRIVER=android TOOLBOX_HOST=0.0.0.0 TOOLBOX_PORT=4500 TOOLBOX_MAX_ANDROID=3
+   TOOLBOX_TEMPLATES='[{"slug":"android","platform":"android","name":"Android","version":1,"ref":"Medium_Phone_API_36.1"}]'`.
+- **Per-lease adb proxy**: AndroidDriver opens a `0.0.0.0` TCP proxy →
+  `127.0.0.1:(consolePort+1)` per lease; `deviceAccess.connectPort` exposes it.
+- **`build import`**: register prebuilt artifact files as a registry build (used
+  to seed the cached main APK as `b_1`, `metadata.branch=main`).
+- **`TOOLBOX_TEMPLATES`** env to point templates at real local AVDs.
 
-### Pending (to be filled as implemented)
-- `TOOLBOX_SERVER` env → container (via dev/src/compose.ts + docker-compose.yml).
-- Broker per-lease adbd proxy port (`deviceAccess.connectPort`).
-- toolbox client install into the container.
-- Sandbox `run-android-test.ts` rewrite to the broker flow.
+### Added (testing-sandbox worktree — the only mandarinvocab changes)
+- **Vendored client**: `nextapp/tools/toolbox.cjs` (bundled single file; container
+  runs `node /app/nextapp/tools/toolbox.cjs`). No npm install / bind-mount needed.
+- **`nextapp/src/scripts/detox/run-android-test.ts`** rewritten to use the broker:
+  - APK: `ensureBrokerApks()` pulls the `branch=main` build from the registry if
+    the worktree doesn't already have it.
+  - Emulator: `brokerLease()` (`session create --template android`) → serial +
+    `connectPort`. Replaces mac-bridge `manage-emulator`.
+  - Metro reverse: `brokerForward(sid, 8081, EXPO_PORT)` → broker runs
+    `adb reverse tcp:8081 tcp:<EXPO_PORT>` on the MAC (device:8081 → Mac Metro).
+  - Container adb: `adb connect host.docker.internal:<connectPort>` from the
+    container's own adb server; detox `DETOX_ADB_NAME=host.docker.internal:<connectPort>`.
+  - Test-server reverse (device:3001 → container:3001) stays container-side.
+  - `brokerRelease(sid)` in `finally`.
+- **No env/compose change needed**: `TOOLBOX_SERVER` defaults to
+  `http://host.docker.internal:4500` in the script. `host.docker.internal` already
+  resolves (existing `extra_hosts`). EXPO_PORT already in container env (19011).
 
-## Unchanged / coexisting (for now)
-- mac-bridge (per-feature 132xx) — still present; broker is additive.
-- `ADB_SERVER_SOCKET: tcp:host.docker.internal:5037` — existing; broker flow uses
-  its own `adb connect <proxy>` instead.
+### Verified
+- Container → broker `health`/`build list` over `host.docker.internal:4500`. ✓
+- Broker lease boots emulator; container adb reaches it via the proxy. ✓
+- Full e2e provisioning chain (lease → forward → adb connect → db → detox prepare). ✓
+
+## Unchanged / coexisting
+- mac-bridge (per-feature 132xx) — still present; broker path no longer calls it.
+- The broker's `connectPort` proxy replaces `manage-emulator`'s `+10001` proxy.
 - Per-feature ports: nextapp 13000, nextappTest 13100, macBridge 13200,
-  emulator 5554, expo 19000 (from dev/src/shared.ts).
+  emulator 5554, expo 19000 (dev/src/shared.ts) — untouched.
