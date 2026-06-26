@@ -1,54 +1,35 @@
 #!/usr/bin/env bash
-# Start the agent-toolbox broker for mandarinvocab e2e: a single shared instance
-# on 0.0.0.0:4500, driver=android, and (once) seed the prebuilt main APK into the
-# registry so every `dev <feature>` env can pull it. Foreground (for launchd).
+# Start the agent-toolbox broker: a single shared instance on 0.0.0.0:4500,
+# driver=all (Android emulators + iOS sims). Foreground (for launchd).
+#
+# This launcher is app-agnostic. Registering builds for a specific app — importing
+# its APK/.app, tagging branch=main, choosing what "one build serves every feature"
+# means — is the APP's job: it runs `toolbox build import` against this broker. The
+# broker only stores builds + leases devices; it knows nothing about any app.
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 SERVER_DIR="$ROOT/server"
-CLIENT_BIN="$ROOT/client/dist/index.cjs"
 PORT="${TOOLBOX_PORT:-4500}"
-APKS="${MANDARINVOCAB_APK_CACHE:-$HOME/.cache/mandarinvocab/apks}"
 BROKER_AVD="${BROKER_AVD:-agtbx-android}"
+BROKER_IOS_DEVICE="${BROKER_IOS_DEVICE:-iPhone 16}"
+BROKER_IOS_RUNTIME="${BROKER_IOS_RUNTIME:-iOS 18.3}"
 
-DEFAULT_TEMPLATES="[{\"slug\":\"android\",\"platform\":\"android\",\"name\":\"Android\",\"version\":1,\"ref\":\"${BROKER_AVD}\"}]"
+# One broker, both platforms: an Android emulator template + an iOS simulator
+# template (ref is "<deviceType>|<runtime>"). driver=all routes each lease to the
+# right driver by platform.
+DEFAULT_TEMPLATES="[{\"slug\":\"android\",\"platform\":\"android\",\"name\":\"Android\",\"version\":1,\"ref\":\"${BROKER_AVD}\"},{\"slug\":\"ios\",\"platform\":\"ios\",\"name\":\"iOS\",\"version\":1,\"ref\":\"${BROKER_IOS_DEVICE}|${BROKER_IOS_RUNTIME}\"}]"
 
-export TOOLBOX_DRIVER=android
+export TOOLBOX_DRIVER=all
 export TOOLBOX_HOST=0.0.0.0
 export TOOLBOX_PORT="$PORT"
 export TOOLBOX_MAX_ANDROID="${TOOLBOX_MAX_ANDROID:-3}"
+export TOOLBOX_MAX_IOS="${TOOLBOX_MAX_IOS:-2}"
 export TOOLBOX_TEMPLATES="${TOOLBOX_TEMPLATES:-$DEFAULT_TEMPLATES}"
 
 # Note: the AVD and its warm-boot snapshot are provisioned by the SERVER on first
 # lease (create-if-missing), so leasing always yields a warm, validated device
 # with no setup script. scripts/warm-avd.sh remains as an optional manual primer.
-
-# Seed the branch=main APK into the registry once the server is healthy (only if
-# it isn't there already). Runs in the background; the registry persists to disk.
-seed_main_build() {
-  for _ in $(seq 1 60); do
-    curl -sf "http://127.0.0.1:$PORT/health" >/dev/null 2>&1 && break
-    sleep 1
-  done
-  if curl -sf "http://127.0.0.1:$PORT/builds" 2>/dev/null | grep -q '"branch":"main"'; then
-    echo "[broker] main build already in registry"
-    return 0
-  fi
-  if [ -f "$APKS/app-debug.apk" ] && [ -f "$APKS/app-debug-androidTest.apk" ]; then
-    echo "[broker] seeding main APK from $APKS"
-    node "$CLIENT_BIN" build import --platform android \
-      --artifact "apk=$APKS/app-debug.apk" \
-      --artifact "test-apk=$APKS/app-debug-androidTest.apk" \
-      --meta branch=main --meta source=mandarinvocab-cache \
-      --server "http://127.0.0.1:$PORT" >/dev/null 2>&1 \
-      && echo "[broker] main build seeded" \
-      || echo "[broker] seed failed (non-fatal)"
-  else
-    echo "[broker] no cached APKs at $APKS — skipping seed (build one first)"
-  fi
-}
-
-seed_main_build &
 
 cd "$SERVER_DIR"
 exec npx tsx src/index.ts

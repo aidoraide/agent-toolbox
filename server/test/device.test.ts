@@ -23,6 +23,36 @@ describe("device proxy", () => {
     expect((r.json?.stdout as string).trim()).toBe("35");
   });
 
+  test("host-exec runs a host command with {{udid}} + {{file}} substitution", async () => {
+    s = await startServer();
+    const id = await createActive(s.server);
+    const fd = new FormData();
+    fd.append(
+      "spec",
+      JSON.stringify({
+        argv: ["sh", "-c", "echo udid=[{{udid}}]; cat {{file:note}}"],
+        timeoutMs: 10_000,
+      }),
+    );
+    fd.append("note", new Blob(["staged-content"]), "note.txt");
+    const res = await fetch(`${s.server}/sessions/${id}/host-exec`, {
+      method: "POST",
+      body: fd,
+    });
+    expect(res.ok).toBe(true);
+    const body = (await res.json()) as {
+      stdout: string;
+      stderr: string;
+      exitCode: number;
+    };
+    expect(body.exitCode).toBe(0);
+    // {{udid}} -> the device serial (android fake => emulator-NNNN); {{file:note}}
+    // -> the staged upload's path; nothing left unsubstituted.
+    expect(body.stdout).toMatch(/udid=\[emulator-\d+\]/);
+    expect(body.stdout).toContain("staged-content");
+    expect(body.stdout).not.toContain("{{");
+  });
+
   test("D2 shell on unknown session → session_not_found", async () => {
     s = await startServer();
     const r = await cli(s.server, ["device", "shell", "s_nope", "echo hi"]);

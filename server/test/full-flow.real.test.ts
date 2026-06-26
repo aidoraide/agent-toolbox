@@ -190,3 +190,68 @@ function tmp(name: string): string {
     expect(out).toContain("** TEST SUCCEEDED **");
   }, 300_000);
 });
+
+// One broker, BOTH platforms (driver=all): proves the CompositeDriver routes a
+// lease to the right backend by template platform — a single server leases sims
+// AND emulators. The iOS lease runs whenever RUN_REAL_IOS=1; the android lease
+// only when RUN_REAL_ANDROID=1 too (it boots a real emulator), proving both
+// platforms coexist in the same broker.
+(process.env.RUN_REAL_IOS === "1" ? describe : describe.skip)("MULTI-DRIVER (driver=all) — one broker, route by platform", () => {
+  let s: TestServer;
+  const leased: string[] = [];
+
+  beforeAll(async () => {
+    s = await startServer({
+      driver: "all",
+      templates: [
+        { slug: "android", platform: "android", name: "Android", version: 1, ref: ANDROID_AVD },
+        { slug: "iphone", platform: "ios", name: "iPhone", version: 1, ref: `${IOS_DEVICE}|${IOS_RUNTIME}` },
+      ],
+      maxByPlatform: { android: 1, ios: 1 },
+    });
+  }, 600_000);
+
+  afterAll(async () => {
+    for (const sid of leased) {
+      await cli(s.server, ["session", "release", sid]).catch(() => undefined);
+    }
+    await s?.stop();
+  }, 120_000);
+
+  test("leases an iOS sim (composite routes ios → IosDriver)", async () => {
+    const r = await cli(s.server, ["session", "create", "--template", "iphone"]);
+    const sid = r.json?.sessionId as string;
+    leased.push(sid);
+    expect(r.json?.status).toBe("active");
+    const access = (await cli(s.server, ["session", "access", sid])).json as {
+      kind?: string;
+      udid?: string;
+    };
+    expect(access.kind).toBe("simctl");
+    expect(access.udid).toMatch(/^[0-9A-F-]{36}$/i);
+    // The agent drives its leased sim by UDID — prove it's real and reachable.
+    const out = execFileSync(
+      "xcrun",
+      ["simctl", "spawn", access.udid!, "/bin/echo", "ok"],
+      { encoding: "utf8" },
+    ).trim();
+    expect(out).toBe("ok");
+  }, 300_000);
+
+  test.runIf(process.env.RUN_REAL_ANDROID === "1")(
+    "ALSO leases an Android emulator from the SAME broker (routes android → AndroidDriver)",
+    async () => {
+      const r = await cli(s.server, ["session", "create", "--template", "android"]);
+      const sid = r.json?.sessionId as string;
+      leased.push(sid);
+      expect(r.json?.status).toBe("active");
+      const access = (await cli(s.server, ["session", "access", sid])).json as {
+        kind?: string;
+        serial?: string;
+      };
+      expect(access.kind).toBe("adb");
+      expect(access.serial).toMatch(/^emulator-\d+$/);
+    },
+    600_000,
+  );
+});

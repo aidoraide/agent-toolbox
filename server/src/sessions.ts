@@ -208,6 +208,20 @@ export class SessionManager {
     return { handle: session.handle as DeviceHandle, platform: session.platform };
   }
 
+  /**
+   * Resolve an active session's handle WITHOUT a device-verb capability check —
+   * for capabilities (e.g. host-exec against the leased device) that aren't part
+   * of the DeviceDriver verb matrix.
+   */
+  resolveActive(id: string): { handle: DeviceHandle; platform: Platform } {
+    const session = this.requireActive(id);
+    if (!session.handle) {
+      throw new AppError("session_not_active", `Session ${id} is still booting`);
+    }
+    this.touch(session);
+    return { handle: session.handle as DeviceHandle, platform: session.platform };
+  }
+
   // SSE: stream wait events until the session is active or gone.
   async *watch(id: string, signal: AbortSignal): AsyncIterable<WaitEvent> {
     const session = this.requireSession(id);

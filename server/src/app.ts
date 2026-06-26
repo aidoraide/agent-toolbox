@@ -1,3 +1,7 @@
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
+
 import multipart from "@fastify/multipart";
 import Fastify, { type FastifyInstance, type FastifyReply, type FastifyRequest } from "fastify";
 import { z } from "zod";
@@ -7,8 +11,10 @@ import { RealBuildRunner } from "./builds-real";
 import { ManualClock, SystemClock, type Clock } from "./clock";
 import type { ServerConfig } from "./config";
 import { AndroidDriver } from "./drivers/android";
+import { CompositeDriver } from "./drivers/composite";
 import { FakeDriver } from "./drivers/fake";
 import { IosDriver } from "./drivers/ios";
+import { run } from "./drivers/sdk";
 import type { DeviceDriver, InputSpec, ResetMode } from "./drivers/driver";
 import { AppError, errorBody } from "./errors";
 import { reconcile } from "./reconcile";
@@ -56,6 +62,18 @@ const importBuildSchema = z.object({
 });
 const advanceClockSchema = z.object({ ms: z.number().int().nonnegative() });
 
+// A generic host command run against a leased device. An off-host client (e.g. a
+// container that can't reach an iOS sim directly) asks the broker to run a host
+// command with the device's id substituted in; the broker stays agnostic to
+// whatever tool that is. argv placeholders: {{udid}}/{{serial}} -> the device id;
+// {{home}} -> the broker's home dir (build absolute tool paths with it, so a
+// client needn't rely on the broker's PATH); {{file:NAME}} -> the staged path of
+// an uploaded file named NAME.
+const hostExecSchema = z.object({
+  argv: z.array(z.string().min(1)).min(1),
+  timeoutMs: z.number().int().positive().max(900_000).optional(),
+});
+
 function parse<T>(schema: z.ZodType<T>, body: unknown): T {
   const result = schema.safeParse(body);
   if (!result.success) {
@@ -92,11 +110,16 @@ export interface BuiltApp {
 export async function buildApp(config: ServerConfig): Promise<BuiltApp> {
   const clock: Clock = config.testMode ? new ManualClock() : new SystemClock();
   const driver: DeviceDriver =
-    config.driver === "android"
-      ? new AndroidDriver(config.cacheDir, config.tagPrefix)
-      : config.driver === "ios"
-        ? new IosDriver(config.tagPrefix)
-        : new FakeDriver(config.tagPrefix, config.seedInstances);
+    config.driver === "all"
+      ? new CompositeDriver({
+          android: new AndroidDriver(config.cacheDir, config.tagPrefix),
+          ios: new IosDriver(config.tagPrefix),
+        })
+      : config.driver === "android"
+        ? new AndroidDriver(config.cacheDir, config.tagPrefix)
+        : config.driver === "ios"
+          ? new IosDriver(config.tagPrefix)
+          : new FakeDriver(config.tagPrefix, config.seedInstances);
 
   // Reconcile orphans before anything else can lease.
   await reconcile(driver);
@@ -185,12 +208,30 @@ export async function buildApp(config: ServerConfig): Promise<BuiltApp> {
   });
   app.post("/sessions/:id/install", async (request) => {
     const { id } = request.params as { id: string };
+    const { handle, platform } = sessions.resolveForVerb(id, "install");
+    // Install a registry build the broker already holds (?build=<id>) — no upload
+    // round-trip — or an uploaded file. The artifact format is sniffed from its
+    // bytes (gzip vs zip), so callers needn't know how it was packed.
+    const q = request.query as { build?: string; artifact?: string };
+    if (q.build) {
+      const artifact = q.artifact ?? (platform === "android" ? "apk" : "app");
+      const bytes = await builds.artifact(q.build, artifact);
+      const name =
+        platform === "android"
+          ? "build.apk"
+          : bytes[0] === 0x1f && bytes[1] === 0x8b
+            ? "build.tgz"
+            : "build.zip";
+      return driver.install(handle, name, bytes);
+    }
     const file = await request.file();
     if (!file) {
-      throw new AppError("invalid_argument", "Missing file upload");
+      throw new AppError(
+        "invalid_argument",
+        "Missing file upload or ?build=<id>",
+      );
     }
     const bytes = await file.toBuffer();
-    const { handle } = sessions.resolveForVerb(id, "install");
     return driver.install(handle, file.filename, bytes);
   });
   app.post("/sessions/:id/forward", async (request) => {
@@ -220,6 +261,58 @@ export async function buildApp(config: ServerConfig): Promise<BuiltApp> {
     const { handle } = sessions.resolveForVerb(id, "input");
     await driver.input(handle, spec);
     return { ok: true };
+  });
+  // Generic host-exec: run a command on the broker's HOST against the leased
+  // device, returning {stdout, stderr, exitCode}. This is how an off-host client
+  // (a container) drives a device it can't reach directly — the iOS analogue of
+  // the adb-over-TCP tunnel: it tells the broker which host tool to run, and the
+  // broker stays tool-agnostic. Multipart: field "spec" (JSON {argv, timeoutMs})
+  // plus any files to stage for the run (referenced in argv as {{file:NAME}}).
+  app.post("/sessions/:id/host-exec", async (request) => {
+    const { id } = request.params as { id: string };
+    const workdir = fs.mkdtempSync(path.join(os.tmpdir(), "agtbx-hostexec-"));
+    const staged: Record<string, string> = {};
+    let specRaw: string | null = null;
+    try {
+      for await (const part of request.parts()) {
+        if (part.type === "file") {
+          const dest = path.join(
+            workdir,
+            path.basename(part.filename ?? part.fieldname),
+          );
+          fs.writeFileSync(dest, await part.toBuffer());
+          staged[part.fieldname] = dest;
+        } else if (part.type === "field" && part.fieldname === "spec") {
+          specRaw = String((part as { value: unknown }).value);
+        }
+      }
+      if (specRaw == null) {
+        throw new AppError("invalid_argument", "Missing 'spec' field");
+      }
+      const spec = parse(hostExecSchema, JSON.parse(specRaw));
+      const { handle } = sessions.resolveActive(id);
+      const deviceId = handle.serial; // adb serial / sim udid
+      const home = os.homedir();
+      const argv = spec.argv.map((token) =>
+        token
+          .replace(/\{\{(?:udid|serial)\}\}/g, deviceId)
+          .replace(/\{\{home\}\}/g, home)
+          .replace(
+            /\{\{file:([^}]+)\}\}/g,
+            (_m, name: string) => staged[name] ?? "",
+          ),
+      );
+      const [cmd, ...rest] = argv;
+      if (cmd === undefined) {
+        throw new AppError("invalid_argument", "argv must not be empty");
+      }
+      const r = await run(cmd, rest, {
+        timeoutMs: spec.timeoutMs ?? 300_000,
+      });
+      return { stdout: r.stdout, stderr: r.stderr, exitCode: r.code };
+    } finally {
+      fs.rmSync(workdir, { recursive: true, force: true });
+    }
   });
 
   // --- builds -------------------------------------------------------------

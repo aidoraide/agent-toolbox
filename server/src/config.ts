@@ -12,8 +12,10 @@ export interface ServerConfig {
   cacheDir: string;
   testMode: boolean;
   // Which device backend to use. "fake" is in-memory; "android" drives real
-  // emulators via adb/emulator; "ios" drives simulators via simctl.
-  driver: "fake" | "android" | "ios";
+  // emulators via adb/emulator; "ios" drives simulators via simctl; "all" runs
+  // both real drivers in one process (one broker leases emulators + sims),
+  // routing each lease by the template's platform.
+  driver: "fake" | "android" | "ios" | "all";
   // Marker baked into every clone we create, so reconciliation can tell our
   // orphans apart from the user's own devices.
   tagPrefix: string;
@@ -64,7 +66,8 @@ export function loadConfig(): ServerConfig {
   if (
     process.env.TOOLBOX_DRIVER === "android" ||
     process.env.TOOLBOX_DRIVER === "fake" ||
-    process.env.TOOLBOX_DRIVER === "ios"
+    process.env.TOOLBOX_DRIVER === "ios" ||
+    process.env.TOOLBOX_DRIVER === "all"
   ) {
     overrides.driver = process.env.TOOLBOX_DRIVER;
   }

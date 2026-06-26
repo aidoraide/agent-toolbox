@@ -124,8 +124,16 @@ export class IosDriver implements DeviceDriver {
       if (/\.(ipa|zip)$/i.test(fileName)) {
         await run("unzip", ["-o", "-q", upload, "-d", dir], { timeoutMs: 60_000 });
         appPath = this.findApp(dir);
+      } else if (/\.(tgz|tar\.gz)$/i.test(fileName)) {
+        // tar preserves the .app's executable bits + symlinks (a plain zip can
+        // drop them, so simctl-installed binaries fail to launch).
+        await run("tar", ["-xzf", upload, "-C", dir], { timeoutMs: 120_000 });
+        appPath = this.findApp(dir);
       } else {
-        throw new AppError("install_failed", `Expected a .ipa/.zip bundle, got: ${fileName}`);
+        throw new AppError(
+          "install_failed",
+          `Expected a .ipa/.zip/.tgz bundle, got: ${fileName}`,
+        );
       }
 
       const result = await simctl(["install", instance.udid, appPath], 120_000);
