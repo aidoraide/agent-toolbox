@@ -1,7 +1,7 @@
 {
   "name": "agent-toolbox",
   "version": "0.1.0",
-  "description": "The agent-toolbox `toolbox` CLI client — lease devices and pull/install builds from a broker over HTTP.",
+  "description": "The agent-toolbox `toolbox` CLI + a typed client library for the broker.",
   "license": "MIT",
   "repository": {
     "type": "git",
@@ -10,14 +10,24 @@
   "bin": {
     "toolbox": "client/dist/index.cjs"
   },
+  "main": "client/dist/lib.cjs",
+  "types": "client/dist/lib.d.ts",
+  "exports": {
+    ".": {
+      "types": "./client/dist/lib.d.ts",
+      "default": "./client/dist/lib.cjs"
+    }
+  },
   "files": [
     "client/dist"
   ],
   "scripts": {
-    "prepare": "esbuild client/src/index.ts --bundle --platform=node --target=node18 --format=cjs --outfile=client/dist/index.cjs --banner:js=\"#!/usr/bin/env node\""
+    "prepare": "esbuild client/src/index.ts --bundle --platform=node --target=node18 --format=cjs --outfile=client/dist/index.cjs --banner:js=\"#!/usr/bin/env node\" && esbuild client/src/lib.ts --bundle --platform=node --target=node18 --format=cjs --outfile=client/dist/lib.cjs && tsc -p client/tsconfig.lib.json"
   },
   "devDependencies": {
+    "@types/node": "^22.5.0",
     "esbuild": "^0.24.0",
+    "typescript": "^5.5.4",
     "zod": "^3.23.8"
   }
 }
