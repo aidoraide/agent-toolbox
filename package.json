@@ -1,0 +1,23 @@
+{
+  "name": "agent-toolbox",
+  "version": "0.1.0",
+  "description": "The agent-toolbox `toolbox` CLI client — lease devices and pull/install builds from a broker over HTTP.",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/aidoraide/agent-toolbox.git"
+  },
+  "bin": {
+    "toolbox": "client/dist/index.cjs"
+  },
+  "files": [
+    "client/dist"
+  ],
+  "scripts": {
+    "prepare": "esbuild client/src/index.ts --bundle --platform=node --target=node18 --format=cjs --outfile=client/dist/index.cjs --banner:js=\"#!/usr/bin/env node\""
+  },
+  "devDependencies": {
+    "esbuild": "^0.24.0",
+    "zod": "^3.23.8"
+  }
+}
