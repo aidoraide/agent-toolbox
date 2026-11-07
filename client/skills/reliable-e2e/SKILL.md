@@ -149,7 +149,7 @@ and load each change's JS bundle onto the same binary at runtime.
 
 ```bash
 # Register a canonical build once (e.g. from main) ...
-toolbox build import --platform android \
+toolbox build upload --platform android \
   --artifact apk=app-debug.apk --artifact test-apk=app-debug-androidTest.apk \
   --meta branch=main
 # ... and every env pulls it instead of compiling:

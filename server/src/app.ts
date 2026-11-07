@@ -1,6 +1,8 @@
+import { createHash, timingSafeEqual } from "node:crypto";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { pipeline } from "node:stream/promises";
 
 import multipart from "@fastify/multipart";
 import Fastify, { type FastifyInstance, type FastifyReply, type FastifyRequest } from "fastify";
@@ -48,18 +50,14 @@ const inputSchema = z.discriminatedUnion("type", [
     y2: z.number(),
   }),
 ]);
-const buildSchema = z.object({
+// Non-file fields of a build upload (multipart, so metadata arrives as JSON).
+const uploadFieldsSchema = z.object({
   platform: z.string().min(1),
-  projectPath: z.string().min(1),
+  appDir: z.string().min(1).optional(),
   // Arbitrary client tags (feature, git commit, branch, ...).
-  metadata: z.record(z.string()).optional(),
+  metadata: z.string().optional(),
 });
-
-const importBuildSchema = z.object({
-  platform: z.string().min(1),
-  artifacts: z.record(z.string().min(1)),
-  metadata: z.record(z.string()).optional(),
-});
+const metadataSchema = z.record(z.string());
 const advanceClockSchema = z.object({ ms: z.number().int().nonnegative() });
 
 // A generic host command run against a leased device. An off-host client (e.g. a
@@ -80,6 +78,22 @@ function parse<T>(schema: z.ZodType<T>, body: unknown): T {
     throw new AppError("invalid_argument", result.error.issues[0]?.message ?? "Invalid request");
   }
   return result.data;
+}
+
+function parseMetadata(raw: string | undefined): Record<string, string> | undefined {
+  if (raw === undefined) return undefined;
+  let value: unknown;
+  try {
+    value = JSON.parse(raw);
+  } catch {
+    throw new AppError("invalid_argument", "metadata must be JSON");
+  }
+  return parse(metadataSchema, value);
+}
+
+// Hash both sides so the constant-time compare doesn't need equal-length inputs.
+function tokenDigest(token: string): Buffer {
+  return createHash("sha256").update(token).digest();
 }
 
 async function streamNdjson(
@@ -145,6 +159,20 @@ export async function buildApp(config: ServerConfig): Promise<BuiltApp> {
     }
     reply.status(500).send(errorBody(err));
   });
+
+  // --- auth ---------------------------------------------------------------
+  // With a token configured, everything except /health requires it.
+  if (config.token) {
+    const expected = tokenDigest(config.token);
+    app.addHook("onRequest", async (request) => {
+      if (request.routeOptions.url === "/health") return;
+      const header = request.headers.authorization ?? "";
+      const given = header.startsWith("Bearer ") ? header.slice("Bearer ".length) : "";
+      if (!timingSafeEqual(tokenDigest(given), expected)) {
+        throw new AppError("unauthorized", "Missing or invalid TOOLBOX_TOKEN");
+      }
+    });
+  }
 
   // --- health & capacity --------------------------------------------------
   app.get("/health", async () => ({ ok: true, service: "agent-toolbox", version: VERSION }));
@@ -316,13 +344,45 @@ export async function buildApp(config: ServerConfig): Promise<BuiltApp> {
   });
 
   // --- builds -------------------------------------------------------------
-  app.post("/builds", async (request) => {
-    const body = parse(buildSchema, request.body);
-    return builds.create(body);
-  });
-  app.post("/builds/import", async (request) => {
-    const body = parse(importBuildSchema, request.body);
-    return builds.import(body);
+  // One upload route, two shapes. Multipart: a "source" zip the broker builds, or
+  // one finished file per artifact name (field name = artifact name).
+  app.post("/builds/upload", async (request) => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "agtbx-upload-"));
+    let buildOwnsDir = false;
+    try {
+      const fields: Record<string, string> = {};
+      const files: Record<string, string> = {};
+      for await (const part of request.parts()) {
+        if (part.type === "file") {
+          const dest = path.join(dir, `upload-${Object.keys(files).length}`);
+          await pipeline(part.file, fs.createWriteStream(dest));
+          if (part.file.truncated) {
+            throw new AppError("invalid_argument", `Upload too large: ${part.fieldname}`);
+          }
+          files[part.fieldname] = dest;
+        } else {
+          fields[part.fieldname] = String(part.value);
+        }
+      }
+      const { platform, appDir, metadata: rawMetadata } = parse(uploadFieldsSchema, fields);
+      const metadata = parseMetadata(rawMetadata);
+      const { source, ...artifacts } = files;
+      const artifactCount = Object.keys(artifacts).length;
+      if (source !== undefined) {
+        if (artifactCount > 0) {
+          throw new AppError("invalid_argument", "Send a source zip or artifacts, not both");
+        }
+        const created = builds.createFromSource({ platform, zipPath: source, workDir: dir, appDir, metadata });
+        buildOwnsDir = true;
+        return created;
+      }
+      if (artifactCount === 0) {
+        throw new AppError("invalid_argument", "Send a source zip or at least one artifact");
+      }
+      return builds.store({ platform, artifacts, metadata });
+    } finally {
+      if (!buildOwnsDir) fs.rmSync(dir, { recursive: true, force: true });
+    }
   });
   app.get("/builds", async () => ({ builds: builds.list() }));
   app.get("/builds/:id", async (request) => {

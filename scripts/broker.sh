@@ -1,10 +1,11 @@
 #!/usr/bin/env bash
 # Start the agent-toolbox broker: a single shared instance on 0.0.0.0:4500,
 # driver=all (Android emulators + iOS sims). Foreground (for launchd).
+# Set TOOLBOX_TOKEN to require clients to send that token.
 #
-# This launcher is app-agnostic. Registering builds for a specific app — importing
+# This launcher is app-agnostic. Registering builds for a specific app — uploading
 # its APK/.app, tagging branch=main, choosing what "one build serves every feature"
-# means — is the APP's job: it runs `toolbox build import` against this broker. The
+# means — is the APP's job: it runs `toolbox build upload` against this broker. The
 # broker only stores builds + leases devices; it knows nothing about any app.
 set -euo pipefail
 

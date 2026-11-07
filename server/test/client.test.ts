@@ -48,7 +48,7 @@ describe("client contract & errors", () => {
   });
 
   test("E4 missing required flag → invalid_argument", async () => {
-    const r = await run(["build", "create"]);
+    const r = await run(["build", "upload", "--artifact", "apk=/x.apk"]);
     expect(JSON.parse(r.stderr).error.code).toBe("invalid_argument");
   });
 

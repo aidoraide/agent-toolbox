@@ -6,7 +6,7 @@ import { fileURLToPath } from "node:url";
 
 import { afterAll, beforeAll, describe, expect, test } from "vitest";
 
-import { cli, startServer, type TestServer } from "./harness";
+import { cli, startServer, zipDir, type TestServer } from "./harness";
 
 // The whole pipeline end to end: build on the Mac → lease a device → install →
 // launch/run → verify. Gated + needs the sample apps fetched (samples/fetch.sh).
@@ -56,7 +56,7 @@ function tmp(name: string): string {
   }, 120_000);
 
   test("BUILD produces app + test APKs", async () => {
-    const r = await cli(s.server, ["build", "create", "--platform", "android", "--path", ANDROID_SAMPLE]);
+    const r = await cli(s.server, ["build", "upload", "--platform", "android", "--source", zipDir(ANDROID_SAMPLE)]);
     expect(r.json).toMatchObject({ status: "done" });
     expect((r.json as any).artifacts).toEqual(expect.arrayContaining(["apk", "test-apk"]));
     const id = r.json?.buildId as string;
@@ -140,7 +140,7 @@ function tmp(name: string): string {
   }, 120_000);
 
   test("BUILD produces the .app", async () => {
-    const r = await cli(s.server, ["build", "create", "--platform", "ios", "--path", IOS_SAMPLE]);
+    const r = await cli(s.server, ["build", "upload", "--platform", "ios", "--source", zipDir(IOS_SAMPLE)]);
     expect(r.json).toMatchObject({ status: "done" });
     expect((r.json as any).artifacts).toContain("app");
     await cli(s.server, ["build", "artifact", r.json?.buildId as string, "app", "-o", appZip]);

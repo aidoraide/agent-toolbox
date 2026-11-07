@@ -1,3 +1,4 @@
+import { execFileSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -102,6 +103,19 @@ export function tmpFile(name: string, contents = "x"): string {
 // Create a throwaway project directory for build tests.
 export function tmpProject(opts: { fail?: boolean } = {}): string {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "agtbx-proj-"));
+  fs.writeFileSync(path.join(dir, "README"), "project");
   if (opts.fail) fs.writeFileSync(path.join(dir, "fail.marker"), "1");
   return dir;
+}
+
+// Zip a directory into a throwaway source zip (paths relative to the directory).
+export function zipDir(dir: string): string {
+  const zip = path.join(fs.mkdtempSync(path.join(os.tmpdir(), "agtbx-zip-")), "app.zip");
+  execFileSync("zip", ["-qry", zip, "."], { cwd: dir });
+  return zip;
+}
+
+// A throwaway source zip for build tests.
+export function tmpSource(opts: { fail?: boolean } = {}): string {
+  return zipDir(tmpProject(opts));
 }

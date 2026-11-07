@@ -159,15 +159,9 @@ Tag on each case: `[fake]`, `[real]`, `[both]`.
 
 ## 7. build
 
-- **B1** `[fake]` `build create` (fresh) → `status: "running"`, `buildId`,
-  `cacheHit: false`.
-- **B2** `[fake]` second `build create` with same `--cache-key`, no `--force` →
-  `status: "done"`, `cacheHit: true`, no rebuild performed.
-- **B3** `[fake]` `build create --force` with a populated cache → `cacheHit: false`,
-  rebuild runs.
-- **B4** `[fake]` different `--cache-key` → independent cache, `cacheHit: false`.
-- **B5** `[fake]` no `--cache-key` → uses shared cache bucket (second shared build
-  hits cache).
+- **B1** `[fake]` `build upload --source` → `status: "done"`, `buildId`, artifacts;
+  logs on stderr, one JSON object on stdout.
+- **B5** `[fake]` every source upload builds fresh (no caching).
 - **B6** `[fake]` `build logs` streams `stdout` events then a terminal `exit` event
   with `exitCode`, `ok`, `durationMs`.
 - **B7** `[fake]` `build artifact <id> apk -o file` → file written, `bytes > 0`,
@@ -177,11 +171,24 @@ Tag on each case: `[fake]`, `[real]`, `[both]`.
 - **B9** `[fake]` `build artifact` / `build logs` for unknown `buildId` → error
   `build_not_found`.
 - **B10** `[fake]` artifact request for a **failed** build → error `build_failed`.
-- **B11** `[fake]` `build create` with invalid platform → error `invalid_argument`.
-- **B12** `[fake]` `build create` with a non-existent `--path` → error
-  `project_not_found`.
+- **B11** `[fake]` `build upload` with invalid platform → error `invalid_argument`.
+- **B12** `[fake]` non-existent zip, or `--app-dir` escaping the zip → error
+  `invalid_argument`. An invalid zip → `status: "failed"`.
 - **B13** `[real]` end-to-end: build a real fixture project → `exit 0`, download the
   apk, `bytes > 0`, and it installs onto a leased real device.
+- **B16** `[fake]` `build upload --artifact` stores files, downloadable byte for byte.
+- **B18** `[fake]` `--source` and `--artifact` are mutually exclusive; one is required.
+- **B19** `[fake]` artifact names outside the platform's list → `invalid_argument`.
+- **P1–P5** `[fake]` project discovery in a source zip: nested Expo app, native
+  project by platform, shallowest wins, ambiguous → asks for `--app-dir`, none →
+  `project_not_found`.
+
+### auth
+
+- **A1** `[fake]` no token configured → open access.
+- **A2/A3** `[fake]` token configured, missing or wrong client token → `unauthorized`.
+- **A4/A7** `[fake]` CLI and typed client send the token on every kind of call.
+- **A5/A6** `[fake]` `/health` stays open; every other route is protected.
 
 ---
 

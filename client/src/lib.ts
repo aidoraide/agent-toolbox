@@ -56,9 +56,25 @@ export interface CreateSessionInput {
   failIfBusy?: boolean;
 }
 
+/** Upload exactly one of `source` (a zip the broker builds) or `artifacts` (finished files). */
+export interface UploadBuildInput {
+  platform: Platform;
+  /** Local path to a source zip. */
+  source?: string;
+  /** Artifact name → local file: apk / test-apk (android), app / ipa (ios). */
+  artifacts?: Record<string, string>;
+  /** Project directory inside the zip, when the broker can't find it on its own. */
+  appDir?: string;
+  metadata?: Record<string, string>;
+  /** Called with each chunk of build output during a source build. */
+  onLog?: (chunk: string) => void;
+}
+
 export interface ToolboxClientOptions {
   /** Broker base URL. Defaults to $TOOLBOX_SERVER, else http://localhost:4500. */
   server?: string;
+  /** Broker token. Defaults to $TOOLBOX_TOKEN. */
+  token?: string;
   /** Per-request timeout (ms). Omitted = no timeout (leases can block for minutes). */
   timeoutMs?: number;
 }
@@ -80,6 +96,11 @@ export interface ToolboxClient {
   createSession(input: CreateSessionInput): Promise<Session>;
   releaseSession(id: string): Promise<{ sessionId: string; released: boolean }>;
   getAccess(id: string): Promise<DeviceAccess>;
+  /** Push back the lease TTL. Direct adb traffic over the forwarded port is
+   *  invisible to the broker, so long runs must keep the lease alive here. */
+  heartbeat(id: string): Promise<{ sessionId: string; expiresAt: string }>;
+  /** Upload a source zip or finished artifacts; resolves when the build is finished. */
+  uploadBuild(input: UploadBuildInput): Promise<BuildSummary>;
   listBuilds(): Promise<BuildSummary[]>;
   /** Download a build artifact to `outPath`; returns the byte count written. */
   downloadArtifact(buildId: string, name: string, outPath: string): Promise<number>;
@@ -101,6 +122,7 @@ export function createClient(options: ToolboxClientOptions = {}): ToolboxClient 
     "http://localhost:4500"
   ).replace(/\/$/, "");
   const defaultTimeout = options.timeoutMs;
+  const token = options.token ?? process.env.TOOLBOX_TOKEN;
 
   async function send(
     method: string,
@@ -110,9 +132,13 @@ export function createClient(options: ToolboxClientOptions = {}): ToolboxClient 
   ): Promise<Response> {
     const signal =
       timeoutMs && timeoutMs > 0 ? AbortSignal.timeout(timeoutMs) : undefined;
+    const headers = {
+      ...(init.headers as Record<string, string>),
+      ...(token && { authorization: `Bearer ${token}` }),
+    };
     let res: Response;
     try {
-      res = await fetch(base + pathname, { ...init, signal });
+      res = await fetch(base + pathname, { ...init, headers, signal });
     } catch (err) {
       if ((err as Error).name === "TimeoutError") {
         throw new ToolboxError("timeout", `Request to ${pathname} timed out`, 0);
@@ -167,6 +193,42 @@ export function createClient(options: ToolboxClientOptions = {}): ToolboxClient 
 
     getAccess: (id) =>
       json<DeviceAccess>("GET", `/sessions/${encodeURIComponent(id)}/access`),
+
+    heartbeat: (id) =>
+      json<{ sessionId: string; expiresAt: string }>(
+        "POST",
+        `/sessions/${encodeURIComponent(id)}/heartbeat`,
+      ),
+
+    uploadBuild: async (input) => {
+      const files = input.source !== undefined ? { source: input.source } : (input.artifacts ?? {});
+      const form = new FormData();
+      form.append("platform", input.platform);
+      if (input.appDir) form.append("appDir", input.appDir);
+      if (input.metadata) form.append("metadata", JSON.stringify(input.metadata));
+      for (const [name, filePath] of Object.entries(files)) {
+        form.append(name, new Blob([fs.readFileSync(filePath)]), filePath.split("/").pop());
+      }
+      const res = await send("POST", "/builds/upload", { method: "POST", body: form });
+      const created = (await res.json()) as BuildSummary;
+      if (created.status !== "running") return created;
+
+      // Follow the logs first: GET /builds/:id blocks until the build finishes,
+      // which can outlast fetch's header timeout on a long build.
+      const logs = await send("GET", `/builds/${created.buildId}/logs`, { method: "GET" });
+      let buffered = "";
+      const decoder = new TextDecoder();
+      for await (const chunk of logs.body as unknown as AsyncIterable<Uint8Array>) {
+        buffered += decoder.decode(chunk, { stream: true });
+        const lines = buffered.split("\n");
+        buffered = lines.pop() ?? "";
+        for (const line of lines) {
+          const event = JSON.parse(line) as { type?: string; data?: string };
+          if (event.type !== "exit" && event.data) input.onLog?.(event.data);
+        }
+      }
+      return json<BuildSummary>("GET", `/builds/${created.buildId}`);
+    },
 
     listBuilds: async () =>
       (await json<{ builds: BuildSummary[] }>("GET", "/builds")).builds ?? [],

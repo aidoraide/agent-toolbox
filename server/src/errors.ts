@@ -1,6 +1,7 @@
 // Stable error codes shared across the API. The client re-emits `code` verbatim,
 // and TEST_SPEC asserts on these, so treat them as a contract.
 export type ErrorCode =
+  | "unauthorized"
   | "invalid_argument"
   | "template_not_found"
   | "session_not_found"
@@ -15,6 +16,7 @@ export type ErrorCode =
   | "access_unavailable";
 
 const STATUS_BY_CODE: Record<ErrorCode, number> = {
+  unauthorized: 401,
   invalid_argument: 400,
   template_not_found: 404,
   session_not_found: 404,

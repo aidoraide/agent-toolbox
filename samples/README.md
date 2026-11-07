@@ -27,9 +27,11 @@ run under raw `am instrument` without Hilt or Espresso-input incompatibilities.
 TOOLBOX_DRIVER=android npm --prefix ../server start &
 
 # android → real APK
-toolbox build create --platform android --path "$(pwd)/android/architecture-samples"
+(cd android/architecture-samples && zip -qry /tmp/android-sample.zip . -x '*/build/*')
+toolbox build upload --platform android --source /tmp/android-sample.zip
 # ios → zipped .app
-toolbox build create --platform ios --path "$(pwd)/ios/simple-swiftui/SimpleToDo"
+(cd ios/simple-swiftui/SimpleToDo && zip -qry /tmp/ios-sample.zip .)
+toolbox build upload --platform ios --source /tmp/ios-sample.zip
 ```
 
 Build logs stream to stderr; the result JSON (buildId, status, artifacts) prints
