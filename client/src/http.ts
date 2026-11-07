@@ -12,17 +12,23 @@ export class ClientFail extends Error {
   }
 }
 
+function readConfigFile(): { server?: string; token?: string } {
+  try {
+    const configPath = path.join(os.homedir(), ".config", "agent-toolbox", "config.json");
+    return JSON.parse(fs.readFileSync(configPath, "utf8")) as { server?: string; token?: string };
+  } catch {
+    return {}; // no config file
+  }
+}
+
 export function resolveServer(flagServer?: string): string {
   if (flagServer) return flagServer;
   if (process.env.TOOLBOX_SERVER) return process.env.TOOLBOX_SERVER;
-  try {
-    const configPath = path.join(os.homedir(), ".config", "agent-toolbox", "config.json");
-    const cfg = JSON.parse(fs.readFileSync(configPath, "utf8")) as { server?: string };
-    if (cfg.server) return cfg.server;
-  } catch {
-    // no config file — fall through to default
-  }
-  return "http://localhost:4500";
+  return readConfigFile().server || "http://localhost:4500";
+}
+
+function resolveToken(): string | undefined {
+  return process.env.TOOLBOX_TOKEN || readConfigFile().token || undefined;
 }
 
 async function readError(res: Response, text: string): Promise<never> {
@@ -41,8 +47,10 @@ async function doFetch(url: string, init: RequestInit, timeoutMs?: number): Prom
   // legitimately long-running (a queued create can block for minutes). A timeout
   // is opt-in via --timeout for callers that want to bail early.
   const signal = timeoutMs && timeoutMs > 0 ? AbortSignal.timeout(timeoutMs) : undefined;
+  const token = resolveToken();
+  const headers = { ...(init.headers as Record<string, string>), ...(token && { authorization: `Bearer ${token}` }) };
   try {
-    return await fetch(url, { ...init, signal });
+    return await fetch(url, { ...init, headers, signal });
   } catch (err) {
     if ((err as Error).name === "TimeoutError") {
       throw new ClientFail("timeout", `Request to ${url} timed out after ${timeoutMs}ms`);
@@ -130,12 +138,25 @@ export async function uploadFile(
   filePath: string,
   timeoutMs?: number,
 ): Promise<unknown> {
-  if (!fs.existsSync(filePath)) {
-    throw new ClientFail("invalid_argument", `Local file not found: ${filePath}`);
-  }
-  const bytes = fs.readFileSync(filePath);
+  return uploadForm(server, pathname, {}, { file: filePath }, timeoutMs);
+}
+
+// Multipart POST: text fields first, then one local file per field name.
+export async function uploadForm(
+  server: string,
+  pathname: string,
+  fields: Record<string, string>,
+  files: Record<string, string>,
+  timeoutMs?: number,
+): Promise<unknown> {
   const form = new FormData();
-  form.append("file", new Blob([bytes]), path.basename(filePath));
+  for (const [name, value] of Object.entries(fields)) form.append(name, value);
+  for (const [name, filePath] of Object.entries(files)) {
+    if (!fs.existsSync(filePath)) {
+      throw new ClientFail("invalid_argument", `Local file not found: ${filePath}`);
+    }
+    form.append(name, new Blob([fs.readFileSync(filePath)]), path.basename(filePath));
+  }
   const res = await doFetch(server + pathname, { method: "POST", body: form }, timeoutMs);
   const text = await res.text();
   if (!res.ok) await readError(res, text);

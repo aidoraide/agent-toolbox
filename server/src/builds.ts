@@ -1,5 +1,7 @@
+import { execFile } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
+import { promisify } from "node:util";
 
 import type { Clock } from "./clock";
 import { AppError } from "./errors";
@@ -21,12 +23,17 @@ export interface BuildExitEvent {
 export type BuildStreamEvent = BuildLogEvent | BuildExitEvent;
 
 export interface BuildRunner {
+  // `sourceDir` is the unpacked source zip. `appDir` (relative to it) names the
+  // project to build; without it the runner finds the project itself.
   run(
     platform: Platform,
-    projectPath: string,
+    sourceDir: string,
     emit: (event: BuildLogEvent) => void,
+    appDir?: string,
   ): Promise<{ exitCode: number; artifacts: Map<string, Buffer> }>;
 }
+
+const execFileAsync = promisify(execFile);
 
 const ARTIFACT_NAMES: Record<Platform, string[]> = {
   android: ["apk", "test-apk"],
@@ -36,11 +43,11 @@ const ARTIFACT_NAMES: Record<Platform, string[]> = {
 export class FakeBuildRunner implements BuildRunner {
   async run(
     platform: Platform,
-    projectPath: string,
+    sourceDir: string,
     emit: (event: BuildLogEvent) => void,
   ): Promise<{ exitCode: number; artifacts: Map<string, Buffer> }> {
-    emit({ type: "stdout", data: `Building ${platform} project at ${projectPath}\n` });
-    if (fs.existsSync(`${projectPath}/fail.marker`)) {
+    emit({ type: "stdout", data: `Building ${platform} project at ${sourceDir}\n` });
+    if (fs.existsSync(`${sourceDir}/fail.marker`)) {
       emit({ type: "stderr", data: "Build failed: fail.marker present\n" });
       return { exitCode: 1, artifacts: new Map() };
     }
@@ -55,7 +62,7 @@ export class FakeBuildRunner implements BuildRunner {
 }
 
 // A registry record for a build. There is no behind-the-scenes caching: every
-// `create` compiles fresh. Callers `list()` the registry and decide for
+// source upload compiles fresh. Callers `list()` the registry and decide for
 // themselves whether an existing build's artifacts are good to reuse.
 export interface BuildRecord {
   buildId: string;
@@ -78,10 +85,20 @@ interface LiveBuild {
   completion: Promise<void>;
 }
 
-export interface CreateBuildInput {
+export interface CreateFromSourceInput {
   platform: string;
-  projectPath: string;
+  zipPath: string;
+  // Scratch dir holding the zip. The build owns it and removes it when finished.
+  workDir: string;
+  appDir?: string;
   metadata?: Record<string, string>;
+}
+
+function requirePlatform(platform: string): Platform {
+  if (platform !== "android" && platform !== "ios") {
+    throw new AppError("invalid_argument", `Invalid platform: ${platform}`);
+  }
+  return platform;
 }
 
 export class BuildManager {
@@ -101,13 +118,10 @@ export class BuildManager {
 
   // Always compiles fresh. Returns immediately; the build runs async and streams
   // logs via /builds/:id/logs.
-  create(input: CreateBuildInput): { buildId: string; status: BuildRecord["status"] } {
-    if (input.platform !== "android" && input.platform !== "ios") {
-      throw new AppError("invalid_argument", `Invalid platform: ${input.platform}`);
-    }
-    const platform = input.platform;
-    if (!input.projectPath || !fs.existsSync(input.projectPath)) {
-      throw new AppError("project_not_found", `Project path does not exist: ${input.projectPath}`);
+  createFromSource(input: CreateFromSourceInput): { buildId: string; status: BuildRecord["status"] } {
+    const platform = requirePlatform(input.platform);
+    if (input.appDir !== undefined && (path.isAbsolute(input.appDir) || input.appDir.split("/").includes(".."))) {
+      throw new AppError("invalid_argument", `appDir must stay inside the zip: ${input.appDir}`);
     }
 
     this.counter += 1;
@@ -132,38 +146,38 @@ export class BuildManager {
       completion: Promise.resolve(),
     };
     this.live.set(id, build);
-    build.completion = this.run(build, platform, input.projectPath);
+    build.completion = this.run(build, platform, input);
     return { buildId: id, status: "running" };
   }
 
-  // Register already-built artifact files (paths on the broker host) as a build
-  // in the registry — no compilation. Used to seed a prebuilt APK so consumers
-  // can pull it via the normal artifact endpoint.
-  import(input: {
+  // Register finished artifacts (uploaded files, staged on the broker) as a build
+  // in the registry — no compilation.
+  store(input: {
     platform: string;
     artifacts: Record<string, string>;
     metadata?: Record<string, string>;
   }): BuildRecord {
-    if (input.platform !== "android" && input.platform !== "ios") {
-      throw new AppError("invalid_argument", `Invalid platform: ${input.platform}`);
-    }
+    const platform = requirePlatform(input.platform);
     const names = Object.keys(input.artifacts);
-    if (names.length === 0) {
-      throw new AppError("invalid_argument", "No artifacts provided");
+    const allowed = ARTIFACT_NAMES[platform];
+    for (const name of names) {
+      if (!allowed.includes(name)) {
+        throw new AppError(
+          "invalid_argument",
+          `Invalid ${platform} artifact '${name}' (expected: ${allowed.join(", ")})`,
+        );
+      }
     }
     this.counter += 1;
     const id = `b_${this.counter}`;
     const dir = this.buildDir(id);
     fs.mkdirSync(dir, { recursive: true });
     for (const [name, srcPath] of Object.entries(input.artifacts)) {
-      if (!fs.existsSync(srcPath)) {
-        throw new AppError("project_not_found", `Artifact file not found: ${srcPath}`);
-      }
       fs.copyFileSync(srcPath, path.join(dir, name));
     }
     const record: BuildRecord = {
       buildId: id,
-      platform: input.platform,
+      platform,
       status: "done",
       exitCode: 0,
       ok: true,
@@ -222,14 +236,13 @@ export class BuildManager {
     const record = this.records.get(id);
     if (!record) throw new AppError("build_not_found", `Unknown build: ${id}`);
     if (record.status === "failed") throw new AppError("build_failed", `Build ${id} failed`);
-    const file = path.join(this.buildDir(id), name);
-    if (!fs.existsSync(file)) throw new AppError("artifact_not_found", `Unknown artifact: ${name}`);
-    return fs.readFileSync(file);
+    if (!record.artifacts.includes(name)) throw new AppError("artifact_not_found", `Unknown artifact: ${name}`);
+    return fs.readFileSync(path.join(this.buildDir(id), name));
   }
 
   // --- internals ----------------------------------------------------------
 
-  private async run(build: LiveBuild, platform: Platform, projectPath: string): Promise<void> {
+  private async run(build: LiveBuild, platform: Platform, input: CreateFromSourceInput): Promise<void> {
     const startedAt = this.clock.now();
     const emit = (event: BuildLogEvent) => {
       build.buffer.push(event);
@@ -239,12 +252,16 @@ export class BuildManager {
     let exitCode = 0;
     let artifacts = new Map<string, Buffer>();
     try {
-      const result = await this.runner.run(platform, projectPath, emit);
+      const sourceDir = path.join(input.workDir, "source");
+      await execFileAsync("unzip", ["-q", input.zipPath, "-d", sourceDir]);
+      const result = await this.runner.run(platform, sourceDir, emit, input.appDir);
       exitCode = result.exitCode;
       if (exitCode === 0) artifacts = result.artifacts;
     } catch (err) {
       exitCode = 1;
       emit({ type: "stderr", data: `${(err as Error).message}\n` });
+    } finally {
+      fs.rmSync(input.workDir, { recursive: true, force: true });
     }
 
     const ok = exitCode === 0;

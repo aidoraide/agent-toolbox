@@ -19,6 +19,8 @@ export interface ServerConfig {
   // Marker baked into every clone we create, so reconciliation can tell our
   // orphans apart from the user's own devices.
   tagPrefix: string;
+  // Shared secret clients must send as a bearer token. Unset = open access.
+  token?: string;
   // Test-only: pre-existing instances seeded into the driver before startup
   // reconciliation runs (drives CL3/CL5 without a real crash).
   seedInstances?: { ref: string; tagged: boolean }[];
@@ -61,6 +63,7 @@ export function loadConfig(): ServerConfig {
   const overrides: Partial<ServerConfig> = {};
   if (process.env.TOOLBOX_HOST) overrides.host = process.env.TOOLBOX_HOST;
   if (process.env.TOOLBOX_PORT) overrides.port = Number(process.env.TOOLBOX_PORT);
+  if (process.env.TOOLBOX_TOKEN) overrides.token = process.env.TOOLBOX_TOKEN;
   if (process.env.TOOLBOX_CACHE_DIR) overrides.cacheDir = process.env.TOOLBOX_CACHE_DIR;
   if (process.env.TOOLBOX_TTL_MS) overrides.ttlMs = Number(process.env.TOOLBOX_TTL_MS);
   if (

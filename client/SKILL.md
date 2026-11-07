@@ -1,6 +1,6 @@
 ---
 name: agent-toolbox
-description: Lease Android emulators / iOS simulators and run builds via the agent-toolbox device broker. Use when an agent needs a virtual device to install an app, run a shell/adb command, take a screenshot, stream logs, or build an APK/IPA — all over a simple JSON CLI, no local adb/Xcode required.
+description: Lease Android emulators / iOS simulators and build or upload apps via the agent-toolbox device broker. Use when an agent needs a virtual device to install an app, run a shell/adb command, take a screenshot, stream logs, or get an APK/.app built — all over a simple JSON CLI, no local adb/Xcode required.
 ---
 
 # agent-toolbox client (`toolbox`)
@@ -34,6 +34,9 @@ Point the client at the broker (default `http://localhost:4500`):
 - `--server <url>` flag (highest precedence), or
 - `TOOLBOX_SERVER` env var, or
 - `~/.config/agent-toolbox/config.json` → `{"server":"..."}`
+
+If the broker requires a token, set `TOOLBOX_TOKEN` (or add `"token"` to that
+config file). The client sends it automatically.
 
 ## Core loop
 
@@ -72,8 +75,8 @@ For anything that speaks adb, don't use the proxy verbs — attach your real
 toolchain to the broker's adb server and address the device by serial:
 
 ```bash
-toolbox session adb s_1
-#   → {"host":"127.0.0.1","port":5037,"serial":"emulator-5554"}
+toolbox session access s_1
+#   → {"kind":"adb","host":"127.0.0.1","port":5037,"serial":"emulator-5554","connectPort":...}
 
 export ADB_SERVER_SOCKET=tcp:127.0.0.1:5037
 adb -s emulator-5554 install ./app-debug.apk
@@ -91,52 +94,38 @@ that have no local adb at all.
 
 ## Builds
 
-The broker builds on the Mac (Gradle / xcodebuild) so a container that can't —
-especially for iOS — can delegate and pull the artifact bytes. Independent of
-sessions.
-
-**Every `build create` compiles fresh — there is no behind-the-scenes caching.**
-To reuse a previous build, `build list` the registry and pick one yourself. It
-runs to completion: **raw build logs stream to stderr**, the **result object
-prints to stdout** — watch/keep the logs *and* capture clean JSON, no parsing
-tension.
+Everything goes through one command. Upload source and the broker builds it, or
+upload a finished app and the broker stores it. Either way you get a build ID.
 
 ```bash
-# Tag the build with anything useful; logs → stderr (live), result → stdout
-RESULT=$(toolbox build create --platform android --path /repo \
-  --meta feature=launcher --meta commit=$(git rev-parse --short HEAD) --meta branch=$(git branch --show-current) \
-  2>build.log)
-#   stdout → {"buildId":"b_1","platform":"android","status":"done","exitCode":0,"ok":true,
-#             "durationMs":21204,"artifacts":["apk","test-apk"],
-#             "metadata":{"feature":"launcher","commit":"a1b2c3","branch":"main"}}
-BUILD_ID=$(jq -r .buildId <<<"$RESULT")
+# Source: zip it, upload it, get a build
+git archive -o app.zip HEAD
+toolbox build upload --platform android --source app.zip    # or --platform ios
 
-toolbox build artifact "$BUILD_ID" apk      -o app.apk     # android: apk / test-apk
-toolbox build artifact "$BUILD_ID" app      -o App.zip     # ios: zipped .app (unzip → simctl install)
+# Finished app: upload it as is
+toolbox build upload --platform android --artifact apk=app.apk --artifact test-apk=test.apk
+toolbox build upload --platform ios --artifact app=App.tgz
+
+# Either way: {"buildId":"b_1","status":"done","artifacts":["apk","test-apk"],...}
+toolbox build artifact b_1 apk -o app.apk
 ```
 
-- `status` is `"done"` or `"failed"` (the build ran — `build create` exits 0; a
-  *toolbox* error like bad args or unreachable server exits nonzero).
-- `--meta key=value` (repeatable) tags the build; purely a label, doesn't affect
-  the build.
-- `toolbox build logs <id>` re-streams a build you started elsewhere (NDJSON).
+Artifact names: `apk`, `test-apk` (android); `app`, `ipa` (ios).
 
-### Browse the registry (reuse is your call)
+With `--source`:
+- The broker finds the Expo or native project in the zip. If it finds more than
+  one, it asks you to pick with `--app-dir path/in/zip`.
+- Expo apps get `npm ci` and `expo prebuild` first, including any parent folders
+  and local `file:` dependencies with a lockfile. Keep those in the zip, and leave
+  out `node_modules`.
+- Every upload compiles fresh. Logs stream to stderr and the result prints to
+  stdout. If the stream drops, the build keeps going: reattach with
+  `toolbox build logs <id>`.
+- A failed compile prints `"status":"failed"` and exits 0. Only toolbox errors
+  (bad args, server unreachable) exit nonzero.
 
-The registry persists to disk (survives restarts). List everything built, newest
-first, then decide if an existing build is good enough to reuse instead of
-rebuilding:
-
-```bash
-toolbox build list
-#   → { "builds": [ { "buildId","platform","status","createdAt","durationMs",
-#         "artifacts":["apk","test-apk"],
-#         "metadata":{"feature":"launcher","commit":"a1b2c3","branch":"main"} }, ... ] }
-```
-
-Pick a build (e.g. by matching `metadata.commit`) and pull its artifact with
-`build artifact <buildId> <name> -o`. Artifact names: `apk`, `test-apk`
-(android); `app`, `ipa` (ios).
+Add `--meta key=value` (repeatable) to tag a build. `toolbox build list` shows
+every build, newest first, so you can reuse one instead of rebuilding.
 
 ## Capacity & queueing
 
@@ -162,7 +151,7 @@ reclaims the slot automatically.
 
 ## Error codes
 
-`invalid_argument`, `template_not_found`, `session_not_found`,
+`unauthorized`, `invalid_argument`, `template_not_found`, `session_not_found`,
 `session_not_active`, `unsupported_on_platform`, `install_failed`,
 `artifact_not_found`, `build_not_found`, `build_failed`, `project_not_found`.
 Client-side: `server_unreachable`, `unknown_command`, `bad_server_response`,

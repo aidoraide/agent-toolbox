@@ -28,6 +28,10 @@ toolbox <group> <verb> [args] [flags]
 - `~/.config/agent-toolbox/config.json` → `{ "server": "http://..." }`
 - default `http://localhost:4500`
 
+**Token:** `TOOLBOX_TOKEN` env var, else `"token"` in that config file. Sent as
+`Authorization: Bearer <token>` when set. When the broker has a token, every
+endpoint except `/health` requires it (`unauthorized` otherwise).
+
 **Common flags:** `--server <url>`, `--timeout <ms>`
 
 **Output shape:**
@@ -181,17 +185,24 @@ toolbox device input s_abc swipe 100 200 100 600
 
 ---
 
-## build — compile and serve artifacts as bytes
+## build — upload source or a finished app, get a build ID
 
-Builds are independent of sessions. Artifacts are streamed as bytes, so a remote
-agent downloads then `device install`s without any shared filesystem.
+Builds are independent of sessions. All bytes travel over HTTP, so a remote agent
+needs no shared filesystem.
 
 ```
-toolbox build create --platform android --path /repo/app [--cache-key feat-x] [--force]
-→ POST /builds   { platform, projectPath, cacheKey?, force? }
-{ "buildId": "b_123", "status": "running", "cacheHit": false }
-# if cached and not --force:
-{ "buildId": "b_123", "status": "done", "cacheHit": true }
+toolbox build upload --platform <android|ios> --source app.zip [--app-dir path/in/zip] [--meta k=v]...
+toolbox build upload --platform <android|ios> --artifact <name>=<file>... [--meta k=v]...
+→ POST /builds/upload   (multipart: platform, appDir?, metadata? + "source" or one file per artifact name)
+{ "buildId": "b_123", "platform": "android", "status": "done", "artifacts": ["apk", "test-apk"], "metadata": {}, ... }
+```
+Pass exactly one of `--source` or `--artifact`. `--source` streams build logs to
+stderr until the build finishes. Every source upload compiles fresh.
+
+```
+toolbox build list
+→ GET /builds
+{ "builds": [ { "buildId": "b_123", "status": "done", "createdAt": "...", ... } ] }   # newest first
 
 toolbox build logs b_123
 → GET /builds/b_123/logs   (NDJSON)
@@ -201,20 +212,17 @@ toolbox build logs b_123
 toolbox build artifact b_123 apk -o app-debug.apk
 → GET /builds/b_123/artifact/apk   (octet-stream → file)
 { "path": "app-debug.apk", "bytes": 88412160, "name": "apk" }
-# artifact names: apk | test-apk | app | ipa  (per platform)
+# artifact names: apk | test-apk (android), app | ipa (ios)
 ```
-
-`cacheKey` namespaces cached artifacts (e.g. per feature). `--force` rebuilds and
-overwrites that key's cache. No cache key → shared cache.
 
 ---
 
 ## End-to-end agent flow
 
 ```
-# 1. build (or reuse cache)
-toolbox build create --platform android --path /repo --cache-key feat-x --force
-toolbox build logs b_123                      # stream to completion
+# 1. build (or reuse one from `build list`)
+git archive -o app.zip HEAD
+toolbox build upload --platform android --source app.zip   # → b_123
 toolbox build artifact b_123 apk      -o app.apk
 toolbox build artifact b_123 test-apk -o test.apk
 
@@ -257,6 +265,7 @@ toolbox session release s_abc
 | `device screenshot` | GET | `/sessions/:id/screenshot` |
 | `device logs` | GET (SSE) | `/sessions/:id/logs` |
 | `device input` | POST | `/sessions/:id/input` |
-| `build create` | POST | `/builds` |
+| `build upload` | POST (multipart) | `/builds/upload` |
+| `build list` | GET | `/builds` |
 | `build logs` | GET (NDJSON) | `/builds/:id/logs` |
 | `build artifact` | GET | `/builds/:id/artifact/:name` |

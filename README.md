@@ -44,8 +44,17 @@ registry of builds (with client metadata) whose artifacts stream as bytes.
 
 ```bash
 cd server && npm install && npm start
-# env: TOOLBOX_PORT, TOOLBOX_MAX_ANDROID, TOOLBOX_MAX_IOS, TOOLBOX_TTL_MS, TOOLBOX_CACHE_DIR
+# env: TOOLBOX_TOKEN, TOOLBOX_PORT, TOOLBOX_MAX_ANDROID, TOOLBOX_MAX_IOS, TOOLBOX_TTL_MS, TOOLBOX_CACHE_DIR
 ```
+
+Set `TOOLBOX_TOKEN` to require that token from clients, which send it when they
+have the same env var set. Without it, the broker prints a red warning and allows
+all access.
+
+This is built to run on your own machine. Clients can run commands on the host:
+`host-exec` does it directly, and `build upload --source` runs the uploaded
+project's build scripts. Only give access to clients you trust. The token doesn't
+cover the adb ports opened for leased emulators.
 
 ## Use the client
 
@@ -60,7 +69,7 @@ command surface.
 ## Tests
 
 ```bash
-cd server && npm test                 # 76 fake-tier cases (any OS, no devices), ~1s
+cd server && npm test                 # fake-tier cases (any OS, no devices), ~3s
 cd server && npm run test:real:android # boots real emulators (Mac + Android SDK)
 cd server && npm run test:real:ios     # boots real simulators (Mac + Xcode)
 ```
@@ -74,7 +83,7 @@ failure — and only ones we started (matched by our `-read-only` emulator flag 
 
 - ✅ Server core: driver interface, FakeDriver, session/queue/reaper, build cache, reconciliation
 - ✅ Client CLI: full command surface, JSON-only output
-- ✅ Fake-tier test suite (76 cases) green
+- ✅ Fake-tier test suite green
 - ✅ Real Android driver (read-only emulator pool + adb proxy) — 13 real tests green
 - ✅ Real iOS driver (simctl create/boot/erase + spawn proxy) — 13 real tests green
 - ⬜ 2-VM+ concurrency at scale (gated behind RUN_REAL_ANDROID_CONCURRENCY today)

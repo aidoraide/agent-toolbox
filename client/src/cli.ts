@@ -5,6 +5,7 @@ import {
   resolveServer,
   streamLines,
   uploadFile,
+  uploadForm,
 } from "./http";
 
 export interface RunResult {
@@ -18,7 +19,7 @@ interface ParsedArgs {
   flags: Record<string, string | boolean | string[]>;
 }
 
-const BOOLEAN_FLAGS = new Set(["force", "no-wait", "fail-if-busy"]);
+const BOOLEAN_FLAGS = new Set(["no-wait", "fail-if-busy"]);
 // Flags that may appear multiple times; values accumulate into an array.
 const REPEATABLE_FLAGS = new Set(["meta", "artifact"]);
 
@@ -77,6 +78,19 @@ function requirePositional(positionals: string[], index: number, label: string):
     throw new ClientFail("invalid_argument", `Missing required argument: ${label}`);
   }
   return value;
+}
+
+// A repeatable `--name key=value` flag as a record.
+function pairsFlag(flags: ParsedArgs["flags"], name: string): Record<string, string> {
+  const raw = flags[name];
+  const list = Array.isArray(raw) ? raw : typeof raw === "string" ? [raw] : [];
+  const pairs: Record<string, string> = {};
+  for (const pair of list) {
+    const eq = pair.indexOf("=");
+    if (eq <= 0) throw new ClientFail("invalid_argument", `--${name} must be key=value: ${pair}`);
+    pairs[pair.slice(0, eq)] = pair.slice(eq + 1);
+  }
+  return pairs;
 }
 
 function intFlag(flags: ParsedArgs["flags"], name: string): number {
@@ -269,27 +283,31 @@ async function dispatchDevice(ctx: Ctx, verb: string | undefined, rest: string[]
 async function dispatchBuild(ctx: Ctx, verb: string | undefined, rest: string[]): Promise<void> {
   const { server, timeoutMs, flags, emit, log } = ctx;
   switch (verb) {
-    case "create": {
-      const body: Record<string, unknown> = {
-        platform: requireFlag(flags, "platform"),
-        projectPath: requireFlag(flags, "path"),
-      };
-
-      // --meta key=value (repeatable) → arbitrary build tags.
-      const metaList = Array.isArray(flags.meta) ? flags.meta : typeof flags.meta === "string" ? [flags.meta] : [];
-      if (metaList.length) {
-        const metadata: Record<string, string> = {};
-        for (const pair of metaList) {
-          const eq = pair.indexOf("=");
-          if (eq <= 0) throw new ClientFail("invalid_argument", `--meta must be key=value: ${pair}`);
-          metadata[pair.slice(0, eq)] = pair.slice(eq + 1);
-        }
-        body.metadata = metadata;
+    case "upload": {
+      // --source app.zip (broker builds it) XOR --artifact name=file (finished app).
+      const source = typeof flags.source === "string" ? flags.source : undefined;
+      const artifacts = pairsFlag(flags, "artifact");
+      const hasArtifacts = Object.keys(artifacts).length > 0;
+      if ((source !== undefined) === hasArtifacts) {
+        throw new ClientFail("invalid_argument", "build upload needs exactly one of --source or --artifact");
       }
+      const fields: Record<string, string> = { platform: requireFlag(flags, "platform") };
+      if (typeof flags["app-dir"] === "string") fields.appDir = flags["app-dir"];
+      // --meta key=value (repeatable) → arbitrary build tags.
+      const metadata = pairsFlag(flags, "meta");
+      if (Object.keys(metadata).length > 0) fields.metadata = JSON.stringify(metadata);
 
-      const created = (await requestJson(server, "POST", "/builds", { body, timeoutMs })) as {
+      const files = source !== undefined ? { source } : artifacts;
+      const created = (await uploadForm(server, "/builds/upload", fields, files, timeoutMs)) as {
         buildId: string;
+        status: string;
       };
+      if (created.status !== "running") {
+        emit(created);
+        return;
+      }
+      // Name the build first, so a dropped stream can reattach with `build logs`.
+      log(`Building ${created.buildId}\n`);
       // Stream raw build logs to stderr as they arrive...
       await streamLines(server, "GET", `/builds/${created.buildId}/logs`, timeoutMs, (event) => {
         const ev = event as { type?: string; data?: string };
@@ -304,37 +322,6 @@ async function dispatchBuild(ctx: Ctx, verb: string | undefined, rest: string[])
     case "list":
       emit(await requestJson(server, "GET", "/builds", { timeoutMs }));
       return;
-    case "import": {
-      // Register existing artifact files (paths on the broker host) as a build.
-      // --artifact name=path (repeatable), --meta key=value (repeatable).
-      const artifactList = Array.isArray(flags.artifact)
-        ? flags.artifact
-        : typeof flags.artifact === "string"
-          ? [flags.artifact]
-          : [];
-      if (artifactList.length === 0) {
-        throw new ClientFail("invalid_argument", "build import needs at least one --artifact name=path");
-      }
-      const artifacts: Record<string, string> = {};
-      for (const pair of artifactList) {
-        const eq = pair.indexOf("=");
-        if (eq <= 0) throw new ClientFail("invalid_argument", `--artifact must be name=path: ${pair}`);
-        artifacts[pair.slice(0, eq)] = pair.slice(eq + 1);
-      }
-      const body: Record<string, unknown> = { platform: requireFlag(flags, "platform"), artifacts };
-      const metaList = Array.isArray(flags.meta) ? flags.meta : typeof flags.meta === "string" ? [flags.meta] : [];
-      if (metaList.length) {
-        const metadata: Record<string, string> = {};
-        for (const pair of metaList) {
-          const eq = pair.indexOf("=");
-          if (eq <= 0) throw new ClientFail("invalid_argument", `--meta must be key=value: ${pair}`);
-          metadata[pair.slice(0, eq)] = pair.slice(eq + 1);
-        }
-        body.metadata = metadata;
-      }
-      emit(await requestJson(server, "POST", "/builds/import", { body, timeoutMs }));
-      return;
-    }
     case "logs": {
       const id = requirePositional(rest, 0, "buildId");
       await streamLines(server, "GET", `/builds/${id}/logs`, timeoutMs, emit);
