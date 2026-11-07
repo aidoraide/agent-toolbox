@@ -49,7 +49,8 @@ cd server && npm install && npm start
 
 Set `TOOLBOX_TOKEN` to require that token from clients, which send it when they
 have the same env var set. Without it, the broker prints a red warning and allows
-all access.
+all access. `scripts/broker.sh` also loads settings from a gitignored `.env` in the
+repo root (`npm start` doesn't).
 
 This is built to run on your own machine. Clients can run commands on the host:
 `host-exec` does it directly, and `build upload --source` runs the uploaded

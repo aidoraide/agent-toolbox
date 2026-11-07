@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Start the agent-toolbox broker: a single shared instance on 0.0.0.0:4500,
 # driver=all (Android emulators + iOS sims). Foreground (for launchd).
-# Set TOOLBOX_TOKEN to require clients to send that token.
+# Set TOOLBOX_TOKEN (here or in .env) to require clients to send that token.
 #
 # This launcher is app-agnostic. Registering builds for a specific app — uploading
 # its APK/.app, tagging branch=main, choosing what "one build serves every feature"
@@ -10,6 +10,15 @@
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+
+# Optional local settings (e.g. TOOLBOX_TOKEN). These override the environment.
+if [ -f "$ROOT/.env" ]; then
+  set -a
+  # shellcheck disable=SC1091
+  . "$ROOT/.env"
+  set +a
+fi
+
 SERVER_DIR="$ROOT/server"
 PORT="${TOOLBOX_PORT:-4500}"
 BROKER_AVD="${BROKER_AVD:-agtbx-android}"
